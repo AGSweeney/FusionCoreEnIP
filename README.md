@@ -1,6 +1,6 @@
 # FusionCoreEnIP
 
-**EtherNet/IP Industrial I/O Adapter for ESP32-P4**
+**EtherNet/IP Industrial I/O Adapter Stack for ESP32-P4**
 
 FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-P4 platform, providing industrial-grade connectivity for multiple sensors and I/O modules. The device integrates seamlessly with PLCs and industrial automation systems through standard EtherNet/IP protocols, while offering a modern web interface and REST API for configuration and monitoring.
 
@@ -36,7 +36,11 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 - **Connection Management**: Multiple simultaneous connections (Exclusive Owner, Input Only, Listen Only)
 - **Configurable RPI**: Requested Packet Interval configuration per connection type
 - **EDS File Support**: Embedded Electronic Data Sheet for device identification
-- **File Object Support**: EDS file and icon retrieval via CIP File Object
+- **CIP File Object (Class 0x37)**: On-device EDS file and icon serving
+  - Instance 200: Embedded EDS file ("EDS.txt") available for download via RSLinx and EtherNet/IP tools
+  - Instance 201: Device icon file ("EDSCollection.gz") for visualization in configuration tools
+  - Automatic EDS file installation: RSLinx can automatically download and install EDS file from device
+  - Compatible with Rockwell Studio 5000, RSLinx, and EtherNet/IP Explorer
 
 ### Sensor Integration
 
@@ -48,11 +52,14 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
   - Update rate: ~10 Hz
 
 - **LSM6DS3 6-DOF IMU (Inertial Measurement Unit)**
-  - Roll, Pitch, and Ground Angle orientation
-  - Sensor fusion using complementary filter or Madgwick filter
+  - Roll, Pitch, and Ground Angle orientation calculations
+  - Sensor fusion using complementary filter (96% gyroscope, 4% accelerometer)
+  - Ground truth calculation: Angle from vertical using 3D angle formula
+  - Calibration support: Accelerometer and gyroscope offset calibration
   - Configurable accelerometer and gyroscope settings
-  - Calibration support for improved accuracy
-  - Update rate: ~10 Hz
+  - Zero offset support: Adjustable roll/pitch/yaw zero points
+  - Update rate: ~10 Hz (sensor samples at 104 Hz internally)
+  - See [LSM6DS3 Angle Calculation Documentation](docs/LSM6DS3_ANGLE_CALCULATION.md) for detailed implementation
 
 - **NAU7802 24-Bit Weight Scale ADC**
   - High-precision load cell interface
@@ -95,18 +102,32 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
   - Persistent configuration in NVS
 
 - **Address Conflict Detection (ACD)**
-  - RFC 5227 compliant ACD for static IP addresses
-  - ARP probe sequence before IP assignment
-  - Conflict detection and retry logic
-  - Configurable probe and announce intervals
-  - Visual LED indication of conflicts
-  - Ongoing defensive ARP probes
+  - RFC 5227 compliant ACD can be enabled or disabled for both Static IP and DHCP configurations
+  - ARP probe sequence before IP assignment (3 probes, ~200ms intervals)
+  - Conflict detection with automatic retry logic (configurable attempts)
+  - EtherNet/IP integration: TCP/IP Interface Object Attribute #10 (`select_acd`) for enable/disable control (applies to both Static IP and DHCP)
+  - Conflict reporting: Attribute #11 provides conflicting device MAC address and ARP frame data
+  - Persistent ACD setting: Configuration saved in NVS, persists across reboots
+  - Visual LED indication: GPIO27 solid ON during conflicts, blinking during normal operation
+  - Ongoing defensive ARP probes: Periodic probes every 90 seconds to actively defend assigned IP
+  - RFC 5227 option (b) defense: First conflict defended, second conflict within 10 seconds triggers retreat
 
 - **LLDP (Link Layer Discovery Protocol)**
-  - LLDP Management Object (Class 0x109)
-  - LLDP Data Table Object (Class 0x10A)
-  - Raw Ethernet frame transmission/reception
-  - ODVA compliance support
+  - IEEE 802.1AB compliant Link Layer Discovery Protocol implementation
+  - LLDP Management Object (Class 0x109): Configuration and status management
+    - Enable/disable LLDP per Ethernet interface
+    - Message transmission interval configuration (default: 30 seconds)
+    - Transmission hold multiplier (default: 4)
+    - Last change timestamp tracking
+  - LLDP Data Table Object (Class 0x10A): Neighbor information storage
+    - Stores discovered neighbor device information
+    - TLV (Type-Length-Value) data: Chassis ID, Port ID, System Name, System Description
+    - System capabilities and management address information
+  - Raw Ethernet frame transmission/reception using ESP-NETIF L2 TAP
+  - Periodic LLDP frame transmission with configurable intervals
+  - Neighbor discovery and topology mapping
+  - Configuration via EtherNet/IP CIP objects using explicit messaging (Get/Set Attribute services)
+  - **ODVA Compliance**: Implementation in progress to achieve ODVA EtherNet/IP compliance for network discovery and topology information
 
 ### Web Interface and REST API
 
@@ -122,14 +143,17 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
   - Real-time sensor status displays
 
 - **REST API Endpoints**
-  - Assembly data access (`/api/assemblies/*`)
-  - Sensor configuration and status
-  - Network configuration management
-  - OTA update control
-  - System logs retrieval
-  - I2C bus configuration
-  - Device reboot control
-  - Modbus TCP configuration
+  - Complete REST API with comprehensive JSON endpoints
+  - Assembly data access (`/api/assemblies/*`, `/api/status`)
+  - Sensor configuration and status (VL53L1X, LSM6DS3, NAU7802)
+  - Sensor calibration endpoints (tare, offset, crosstalk calibration)
+  - Network configuration management (`/api/ipconfig`)
+  - OTA update control (`/api/ota/*`)
+  - System logs retrieval (`/api/logs`)
+  - I2C bus configuration (`/api/i2c/*`)
+  - GPIO and DAC control (`/api/mcp230xx`, `/api/gp8403`)
+  - Device reboot control (`/api/reboot`)
+  - See [Complete API Documentation](docs/API_Endpoints.md) for detailed endpoint reference
 
 ### Firmware Management
 
@@ -375,10 +399,13 @@ All multi-byte integers are stored in **little-endian** byte order:
 ## Hardware Platform
 
 - **Microcontroller**: ESP32-P4
+- **Development Board**: [Waveshare ESP32-P4 WiFi6 Dev Kit](https://www.waveshare.com/product/arduino/boards-kits/esp32-p4/esp32-p4-wifi6-dev-kit.htm) (used for development and testing)
 - **Ethernet PHY**: IP101 (10/100 Mbps)
 - **Interface**: I2C bus for sensor and I/O communication
 - **User LED**: GPIO27 for status indication
 - **Flash**: Partition-based firmware storage with OTA support
+
+**Note on Hardware Support**: This project includes implementations for the hardware components listed in the Sensors and Output Devices sections above. However, **use of any specific hardware component is entirely optional** - you can configure the device to use none, some, or all of the supported hardware based on your application needs. The modular component architecture makes it straightforward to **add support for custom hardware** by implementing additional components following the existing patterns. Additionally, **any hardware supported by ESP32/ESP-IDF can be integrated** with some development effort, leveraging the full capabilities of the ESP32 platform. All hardware components can be individually enabled or disabled via configuration.
 
 ---
 
@@ -388,8 +415,24 @@ All multi-byte integers are stored in **little-endian** byte order:
 - **Port**: Standard EtherNet/IP port 0xAF12 (44818)
 - **Connection Types**: Exclusive Owner, Input Only, Listen Only
 - **CIP Objects**: Standard EtherNet/IP CIP objects plus custom objects
-- **File Object**: Embedded EDS file and device icon support
-- **LLDP Objects**: LLDP Management and Data Table objects for network discovery
+- **File Object (Class 0x37)**: On-device EDS file and icon serving for automatic device configuration
+  - Compatible with RSLinx automatic EDS file download
+  - Supports Rockwell Studio 5000 and EtherNet/IP Explorer
+  - Embedded EDS file accessible via CIP File Object services
+- **LLDP Objects**: LLDP Management (Class 0x109) and Data Table (Class 0x10A) objects for network discovery
+  - **LLDP Management Object (Class 0x109)**: Configure LLDP operation via EtherNet/IP explicit messaging
+    - Attribute 1: `lldp_enable` - Enable/disable LLDP per interface (array of BOOL)
+    - Attribute 2: `msg_tx_interval` - Transmission interval in seconds (UINT)
+    - Attribute 3: `msg_tx_hold` - Transmission hold multiplier (USINT, typically 4)
+    - Attribute 4: `lldp_datastore` - Data store identifier (WORD)
+    - Attribute 5: `last_change` - Timestamp of last configuration change (UDINT)
+  - **LLDP Data Table Object (Class 0x10A)**: Read neighbor information discovered via LLDP
+    - Stores neighbor entries with Chassis ID, Port ID, TTL, and optional TLVs
+    - Accessible via GetAttributeSingle and GetAttributeAll services
+  - Configuration can be set via EtherNet/IP CIP explicit messaging to the LLDP Management Object attributes
+  - **ODVA Compliance**: Active development to achieve full ODVA EtherNet/IP specification compliance for network topology discovery
+- **TCP/IP Interface Object**: Enhanced with ACD control (Attribute #10) and conflict reporting (Attribute #11)
+- **Message Router Object**: Modified to advertise supported CIP objects for automatic discovery
 
 ---
 
@@ -448,20 +491,39 @@ All multi-byte integers are stored in **little-endian** byte order:
 
 ### Address Conflict Detection (ACD)
 
-- RFC 5227 compliant implementation
-- Pre-assignment IP conflict detection
-- Configurable probe and announce intervals
-- Automatic retry with configurable limits
-- Visual status indication via LED
-- Ongoing defensive ARP probes
+- **RFC 5227 Compliant Implementation**: Full IPv4 Address Conflict Detection support
+- **Enable/Disable Control**: ACD can be enabled or disabled for both Static IP and DHCP configurations via EtherNet/IP TCP/IP Interface Object Attribute #10 (`select_acd`)
+- **Pre-assignment Detection**: ARP probe sequence (3 probes) before IP assignment (when ACD is enabled)
+- **EtherNet/IP Integration**: 
+  - Control via TCP/IP Interface Object Attribute #10 (`select_acd`) - applies to both Static IP and DHCP
+  - Conflict data available via Attribute #11 (conflicting MAC, ARP frame, activity status)
+  - Persistent configuration in NVS (setting persists across reboots for both configuration types)
+- **Configurable Timing**: Fully configurable timing parameters optimized for EtherNet/IP (currently set to: 200ms probe intervals, 2000ms announce intervals, 90s defensive probes). All timing values can be adjusted via ESP-IDF Kconfig menu
+- **Automatic Retry Logic**: Configurable retry attempts with delay intervals
+- **Visual Status Indication**: GPIO27 LED solid ON during conflicts, blinking during normal operation
+- **Active IP Defense**: Periodic defensive ARP probes every 90 seconds (matches Rockwell PLC behavior)
+- **Conflict Handling**: RFC 5227 option (b) - defends first conflict, retreats on second conflict within 10 seconds
+- **Behavior When Disabled**: IP addresses are assigned immediately without conflict detection (both Static IP and DHCP)
+- See [ACD Conflict Reporting Documentation](docs/ACD_CONFLICT_REPORTING.md) for complete details
 
 ### LLDP Support
 
-- Network topology discovery
-- Neighbor information storage
-- Periodic LLDP frame transmission
-- Raw Ethernet frame handling
-- ODVA compliance features
+- **IEEE 802.1AB Compliant Implementation**: Full Link Layer Discovery Protocol support
+- **Network Topology Discovery**: Automatic discovery of neighboring network devices (switches, routers, other EtherNet/IP devices)
+- **Neighbor Information Storage**: LLDP Data Table Object stores discovered neighbor data including:
+  - Chassis ID and Port ID for neighbor identification
+  - System Name and System Description
+  - System Capabilities (Station, Bridge, Router, etc.)
+  - Management IP address
+  - Time To Live (TTL) information
+- **Periodic Frame Transmission**: Configurable LLDP frame transmission interval (default: 30 seconds)
+- **Raw Ethernet Frame Handling**: Uses ESP-NETIF L2 TAP for direct Ethernet frame transmission/reception at Layer 2
+- **EtherNet/IP Configuration**: LLDP can be configured via EtherNet/IP CIP objects using explicit messaging:
+  - LLDP Management Object (Class 0x109) - Set transmission interval, enable/disable per interface
+  - Configuration accessible via GetAttributeSingle and SetAttributeSingle services
+  - Settings persist in NVS storage
+- **ODVA Compliance**: Implementation in progress to achieve full ODVA EtherNet/IP specification compliance for network topology discovery and management information
+- See [LLDP Component Documentation](components/lldp/README.md) for implementation details
 
 ---
 
@@ -513,23 +575,37 @@ All API endpoints return JSON responses. See component documentation for complet
 ### I2C Bus Management
 
 - Centralized bus initialization and management
-- Automatic device discovery
-- Device count tracking
-- Configurable pull-up resistor control
-- Thread-safe operations
+- Automatic device discovery during boot
+- Device count tracking (reported in Assembly data)
+- Configurable pull-up resistor control (primary and secondary buses)
+- Thread-safe operations with mutex protection
+- Support for multiple I2C buses
 
 ### Configuration Persistence
 
 - Non-volatile storage (NVS) for all settings
-- Network configuration persistence
-- Sensor calibration data storage
-- Device-specific settings
+- Network configuration persistence (IP, DHCP, ACD settings)
+- Sensor calibration data storage (LSM6DS3 offsets, NAU7802 calibration)
+- Device-specific settings (MCP230XX, I2C pull-ups)
+- ACD enable/disable state persistence
+- Sensor enable/disable flags
 
 ### Logging
 
-- Circular buffer for boot and runtime logs
-- REST API access to log data
-- Configurable log buffer size (default: 32KB)
+- Circular buffer for boot and runtime logs (32KB default)
+- REST API access to log data (`/api/logs`)
+- ESP-IDF logging framework integration
+- Boot sequence capture for troubleshooting
+- Thread-safe log buffering
+
+### Network Stack Optimizations
+
+- LWIP stack optimized for EtherNet/IP:
+  - Increased socket limits (64 sockets, 128 UDP PCBs)
+  - Larger TCP buffers (32KB send/receive windows)
+  - IRAM optimizations for real-time performance
+  - Task affinity configured for optimal core assignment
+- See [LWIP Modifications Documentation](docs/LWIP_MODIFICATIONS.md) for complete details
 
 ---
 
@@ -590,20 +666,40 @@ idf.py monitor
 
 Key configuration options available via `idf.py menuconfig`:
 
-- **Ethernet PHY Address**: Configurable PHY address
-- **Ethernet GPIO Pins**: MDC, MDIO, reset pin configuration
-- **ACD Settings**: Address Conflict Detection parameters
-- **I2C Bus Configuration**: SDA, SCL pin assignments
-- **Sensor Enable/Disable**: Per-sensor enable controls
+- **Ethernet Configuration**: 
+  - PHY address configuration
+  - MDC, MDIO, reset pin assignments
+- **ACD Configuration** (OpENer → ACD Configuration):
+  - Probe wait interval (default: 200ms)
+  - Probe interval (default: 200ms)
+  - Number of probe packets (default: 3)
+  - Announce wait interval (default: 2000ms)
+  - Number of announcement packets (default: 4)
+  - Periodic defend interval (default: 90000ms)
+  - Retry enable/disable and retry limits
+- **I2C Bus Configuration**: 
+  - Primary and secondary bus SDA/SCL pin assignments
+  - Pull-up resistor enable/disable per bus
+- **Sensor Configuration**: 
+  - Per-sensor enable/disable controls
+  - VL53L1X, LSM6DS3, NAU7802 individual enable flags
+- **LWIP Stack Configuration**:
+  - Socket limits, buffer sizes, task priorities
+  - IRAM optimization options
 
 ---
 
 ## Documentation
 
-### Component Documentation
+### Technical Documentation
 
+- [API Endpoints](docs/API_Endpoints.md) - Complete REST API reference with examples
+- [ACD Conflict Reporting](docs/ACD_CONFLICT_REPORTING.md) - Address Conflict Detection implementation and EtherNet/IP integration
 - [Assembly Data Layout](docs/ASSEMBLY_DATA_LAYOUT.md) - Complete byte-by-byte assembly layout
-- [LSM6DS3 Angle Calculation](docs/LSM6DS3_ANGLE_CALCULATION.md) - IMU sensor fusion details
+- [LSM6DS3 Angle Calculation](docs/LSM6DS3_ANGLE_CALCULATION.md) - IMU sensor fusion algorithm details
+- [File Object Integration](docs/FILE_OBJECT_INTEGRATION.md) - CIP File Object implementation for EDS file serving
+- [LWIP Modifications](docs/LWIP_MODIFICATIONS.md) - LWIP stack optimizations and RFC 5227 ACD implementation
+- [NAU7802 API Enhancements](docs/NAU7802_API_ENHANCEMENTS.md) - Weight scale API features and configuration
 
 ### Component READMEs
 
