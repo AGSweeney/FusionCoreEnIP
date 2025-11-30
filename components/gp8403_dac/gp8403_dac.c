@@ -1,0 +1,366 @@
+/**
+ * @file gp8403_dac.c
+ * @brief DFRobot Gravity 2-Channel I2C DAC Module (0-10V) Driver Implementation
+ * 
+ * ESP-IDF port of the GP8403 DAC driver for ESP32-P4 platform.
+ * 
+ * This implementation is based on and references the DFRobot_GP8403 Arduino library:
+ * https://github.com/DFRobot/DFRobot_GP8403
+ * 
+ * @note Product: DFRobot Gravity 2-Channel I2C DAC Module (0-10V)
+ * @note SKU: DFR0971
+ * @note Chip: GP8403
+ * @note Product page: https://www.dfrobot.com/product-2613.html
+ */
+
+/*
+ * Copyright (c) 2025, Adam G. Sweeney <agsweeney@gmail.com>
+ * 
+ * Portions of this code reference the DFRobot_GP8403 Arduino library:
+ * Copyright (c) 2022 DFRobot (https://github.com/DFRobot/DFRobot_GP8403)
+ * Written by tangjie (jie.tang@dfrobot.com)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include "gp8403_dac.h"
+#include "esp_log.h"
+#include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <string.h>
+#include <math.h>
+
+static const char *TAG = "gp8403_dac";
+
+// GP8403 I2C register addresses
+// Note: These are typical DAC register addresses. Actual addresses may vary
+// based on GP8403 datasheet. Adjust if needed after verifying datasheet.
+#define GP8403_REG_CHANNEL0_DATA    0x00  // Channel 0 data register (12-bit)
+#define GP8403_REG_CHANNEL1_DATA    0x01  // Channel 1 data register (12-bit)
+#define GP8403_REG_CONTROL          0x02  // Control register (if exists)
+
+// I2C transaction timeout (ms)
+#define GP8403_I2C_TIMEOUT_MS       100
+
+/**
+ * @brief Clamp voltage to valid range
+ */
+static inline float clamp_voltage(float voltage)
+{
+    if (voltage < GP8403_DAC_MIN_VOLTAGE) {
+        return GP8403_DAC_MIN_VOLTAGE;
+    }
+    if (voltage > GP8403_DAC_MAX_VOLTAGE) {
+        return GP8403_DAC_MAX_VOLTAGE;
+    }
+    return voltage;
+}
+
+/**
+ * @brief Clamp DAC value to valid range
+ */
+static inline uint16_t clamp_dac_value(uint16_t value)
+{
+    if (value > GP8403_DAC_MAX_VALUE) {
+        return GP8403_DAC_MAX_VALUE;
+    }
+    return value;
+}
+
+/**
+ * @brief Write data to GP8403 register
+ */
+static esp_err_t gp8403_write_register(gp8403_dac_handle_t *handle, uint8_t reg, uint16_t data)
+{
+    if (handle == NULL || !handle->initialized) {
+        ESP_LOGE(TAG, "Invalid handle or not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Prepare data: 12-bit value, typically sent as 2 bytes (MSB first)
+    // Format: [reg_addr] [data_high] [data_low]
+    // Data format: 12-bit value in bits [11:0], upper 4 bits typically unused
+    uint8_t write_data[3];
+    write_data[0] = reg;
+    write_data[1] = (data >> 8) & 0x0F;  // Upper 4 bits of 12-bit value
+    write_data[2] = data & 0xFF;         // Lower 8 bits
+
+    esp_err_t err = i2c_master_transmit(
+        handle->dev_handle,
+        write_data,
+        sizeof(write_data),
+        pdMS_TO_TICKS(GP8403_I2C_TIMEOUT_MS)
+    );
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C write failed: %s (reg=0x%02X, data=0x%03X)", 
+                 esp_err_to_name(err), reg, data);
+        return err;
+    }
+
+    ESP_LOGD(TAG, "Write reg=0x%02X, data=0x%03X", reg, data);
+    return ESP_OK;
+}
+
+bool gp8403_dac_init(const gp8403_dac_config_t *config, gp8403_dac_handle_t **handle)
+{
+    if (config == NULL || handle == NULL) {
+        ESP_LOGE(TAG, "Invalid parameters");
+        return false;
+    }
+
+    if (config->bus_handle == NULL) {
+        ESP_LOGE(TAG, "I2C bus handle is NULL");
+        return false;
+    }
+
+    // Validate I2C address (should be in range 0x58-0x5F for GP8403)
+    uint8_t i2c_addr = config->i2c_addr;
+    if (i2c_addr == 0) {
+        i2c_addr = GP8403_DAC_DEFAULT_I2C_ADDR;
+    }
+
+    if (i2c_addr < 0x58 || i2c_addr > 0x5F) {
+        ESP_LOGW(TAG, "I2C address 0x%02X may be out of valid range (0x58-0x5F)", i2c_addr);
+    }
+
+    // Allocate handle
+    gp8403_dac_handle_t *dev_handle = calloc(1, sizeof(gp8403_dac_handle_t));
+    if (dev_handle == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate device handle");
+        return false;
+    }
+
+    // Configure I2C device
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = i2c_addr,
+        .scl_speed_hz = 400000,
+    };
+
+    esp_err_t err = i2c_master_bus_add_device(
+        config->bus_handle,
+        &dev_cfg,
+        &dev_handle->dev_handle
+    );
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add I2C device: %s", esp_err_to_name(err));
+        free(dev_handle);
+        return false;
+    }
+
+    // Initialize handle
+    dev_handle->i2c_addr = i2c_addr;
+    dev_handle->initialized = true;
+    dev_handle->channel0_voltage = 0.0f;
+    dev_handle->channel1_voltage = 0.0f;
+
+    // Initialize both channels to 0V
+    gp8403_write_register(dev_handle, GP8403_REG_CHANNEL0_DATA, 0x000);
+    gp8403_write_register(dev_handle, GP8403_REG_CHANNEL1_DATA, 0x000);
+
+    *handle = dev_handle;
+
+    ESP_LOGI(TAG, "GP8403 DAC initialized at I2C address 0x%02X", i2c_addr);
+    return true;
+}
+
+void gp8403_dac_deinit(gp8403_dac_handle_t **handle)
+{
+    if (handle == NULL || *handle == NULL) {
+        return;
+    }
+
+    gp8403_dac_handle_t *dev_handle = *handle;
+
+    // Set both channels to 0V before deinitializing
+    if (dev_handle->initialized) {
+        gp8403_write_register(dev_handle, GP8403_REG_CHANNEL0_DATA, 0x000);
+        gp8403_write_register(dev_handle, GP8403_REG_CHANNEL1_DATA, 0x000);
+    }
+
+    // Remove I2C device
+    if (dev_handle->dev_handle != NULL) {
+        i2c_master_bus_rm_device(dev_handle->dev_handle);
+    }
+
+    // Free handle
+    free(dev_handle);
+    *handle = NULL;
+
+    ESP_LOGI(TAG, "GP8403 DAC deinitialized");
+}
+
+bool gp8403_dac_set_voltage(gp8403_dac_handle_t *handle, gp8403_channel_t channel, float voltage)
+{
+    if (handle == NULL || !handle->initialized) {
+        ESP_LOGE(TAG, "Invalid handle or not initialized");
+        return false;
+    }
+
+    if (channel >= GP8403_CHANNEL_MAX) {
+        ESP_LOGE(TAG, "Invalid channel: %d", channel);
+        return false;
+    }
+
+    // Clamp voltage to valid range
+    float clamped_voltage = clamp_voltage(voltage);
+    if (clamped_voltage != voltage) {
+        ESP_LOGW(TAG, "Voltage %.3fV clamped to %.3fV", voltage, clamped_voltage);
+    }
+
+    // Convert voltage to raw DAC value
+    uint16_t dac_value = gp8403_dac_voltage_to_raw(clamped_voltage);
+
+    // Select register based on channel
+    uint8_t reg = (channel == GP8403_CHANNEL_0) ? GP8403_REG_CHANNEL0_DATA : GP8403_REG_CHANNEL1_DATA;
+
+    // Write to DAC
+    esp_err_t err = gp8403_write_register(handle, reg, dac_value);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    // Update cached voltage
+    if (channel == GP8403_CHANNEL_0) {
+        handle->channel0_voltage = clamped_voltage;
+    } else {
+        handle->channel1_voltage = clamped_voltage;
+    }
+
+    ESP_LOGD(TAG, "Channel %d set to %.3fV (DAC=0x%03X)", channel, clamped_voltage, dac_value);
+    return true;
+}
+
+bool gp8403_dac_set_raw(gp8403_dac_handle_t *handle, gp8403_channel_t channel, uint16_t dac_value)
+{
+    if (handle == NULL || !handle->initialized) {
+        ESP_LOGE(TAG, "Invalid handle or not initialized");
+        return false;
+    }
+
+    if (channel >= GP8403_CHANNEL_MAX) {
+        ESP_LOGE(TAG, "Invalid channel: %d", channel);
+        return false;
+    }
+
+    // Clamp DAC value
+    uint16_t clamped_value = clamp_dac_value(dac_value);
+    if (clamped_value != dac_value) {
+        ESP_LOGW(TAG, "DAC value 0x%03X clamped to 0x%03X", dac_value, clamped_value);
+    }
+
+    // Select register based on channel
+    uint8_t reg = (channel == GP8403_CHANNEL_0) ? GP8403_REG_CHANNEL0_DATA : GP8403_REG_CHANNEL1_DATA;
+
+    // Write to DAC
+    esp_err_t err = gp8403_write_register(handle, reg, clamped_value);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    // Update cached voltage
+    float voltage = gp8403_dac_raw_to_voltage(clamped_value);
+    if (channel == GP8403_CHANNEL_0) {
+        handle->channel0_voltage = voltage;
+    } else {
+        handle->channel1_voltage = voltage;
+    }
+
+    ESP_LOGD(TAG, "Channel %d set to raw 0x%03X (%.3fV)", channel, clamped_value, voltage);
+    return true;
+}
+
+float gp8403_dac_get_voltage(gp8403_dac_handle_t *handle, gp8403_channel_t channel)
+{
+    if (handle == NULL || !handle->initialized) {
+        return 0.0f;
+    }
+
+    if (channel >= GP8403_CHANNEL_MAX) {
+        return 0.0f;
+    }
+
+    return (channel == GP8403_CHANNEL_0) ? handle->channel0_voltage : handle->channel1_voltage;
+}
+
+bool gp8403_dac_set_both_channels(gp8403_dac_handle_t *handle, float voltage)
+{
+    return gp8403_dac_set_channels(handle, voltage, voltage);
+}
+
+bool gp8403_dac_set_channels(gp8403_dac_handle_t *handle, float voltage0, float voltage1)
+{
+    if (handle == NULL || !handle->initialized) {
+        ESP_LOGE(TAG, "Invalid handle or not initialized");
+        return false;
+    }
+
+    bool success = true;
+
+    // Set channel 0
+    if (!gp8403_dac_set_voltage(handle, GP8403_CHANNEL_0, voltage0)) {
+        success = false;
+    }
+
+    // Set channel 1
+    if (!gp8403_dac_set_voltage(handle, GP8403_CHANNEL_1, voltage1)) {
+        success = false;
+    }
+
+    return success;
+}
+
+uint16_t gp8403_dac_voltage_to_raw(float voltage)
+{
+    float clamped = clamp_voltage(voltage);
+    
+    // Convert voltage (0-10V) to 12-bit value (0x000-0xFFF)
+    // Formula: dac_value = (voltage / 10.0) × 4095
+    float normalized = clamped / GP8403_DAC_MAX_VOLTAGE;
+    uint16_t dac_value = (uint16_t)roundf(normalized * GP8403_DAC_MAX_VALUE);
+    
+    return clamp_dac_value(dac_value);
+}
+
+float gp8403_dac_raw_to_voltage(uint16_t dac_value)
+{
+    uint16_t clamped = clamp_dac_value(dac_value);
+    
+    // Convert 12-bit value (0x000-0xFFF) to voltage (0-10V)
+    // Formula: voltage = (dac_value / 4095) × 10.0
+    float normalized = (float)clamped / GP8403_DAC_MAX_VALUE;
+    return normalized * GP8403_DAC_MAX_VOLTAGE;
+}
+
+bool gp8403_dac_is_initialized(gp8403_dac_handle_t *handle)
+{
+    return (handle != NULL && handle->initialized);
+}
+
+uint8_t gp8403_dac_get_i2c_addr(gp8403_dac_handle_t *handle)
+{
+    if (handle == NULL) {
+        return 0;
+    }
+    return handle->i2c_addr;
+}
+

@@ -1,0 +1,25 @@
+idf_component_register(
+    SRCS
+        "src/webui.c"
+        "src/webui_api.c"
+        "src/webui_html.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_http_server
+        nvs_flash
+        json
+        ota_manager
+        system_config
+        modbus_tcp
+        lwip
+        opener
+        driver
+        log_buffer
+        nau7802
+        vl53l1x_manager
+        lsm6ds3_manager
+        gp8403_dac_manager
+        mcp230xx_manager
+)
+
