@@ -273,7 +273,7 @@ This document provides a comprehensive record of all modifications made to the L
 
 ### Configured ACD Timings
 
-All ACD timing constants are configurable via ESP-IDF Kconfig. Current configured values (optimized for EtherNet/IP):
+All ACD timing constants are configurable via ESP-IDF Kconfig. Current configured values (can be optimized for EtherNet/IP):
 
 | Constant | Value (ms) | Equivalent | Description |
 |----------|------------|------------|-------------|
