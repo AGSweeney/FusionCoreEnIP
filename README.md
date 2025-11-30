@@ -417,7 +417,7 @@ All multi-byte integers are stored in **little-endian** byte order:
 - **CIP Objects**: Standard EtherNet/IP CIP objects plus custom objects
 - **File Object (Class 0x37)**: On-device EDS file and icon serving for automatic device configuration
   - Compatible with RSLinx automatic EDS file download
-  - Supports Rockwell Studio 5000 and EtherNet/IP Explorer
+  - Supports Rockwell Studio 5000 and RSLinx (others untested)
   - Embedded EDS file accessible via CIP File Object services
 - **LLDP Objects**: LLDP Management (Class 0x109) and Data Table (Class 0x10A) objects for network discovery
   - **LLDP Management Object (Class 0x109)**: Configure LLDP operation via EtherNet/IP explicit messaging
