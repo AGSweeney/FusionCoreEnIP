@@ -137,10 +137,14 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
   - Self-contained (no external dependencies/CDN)
 
 - **Web Pages**
-  - Network configuration page
-  - Firmware update (OTA) interface
-  - NAU7802 scale configuration and monitoring
-  - Real-time sensor status displays
+  - `/` - Network configuration page (IP settings, DHCP/Static configuration)
+  - `/ota` - Firmware update (OTA) interface
+  - `/nau7802` - NAU7802 scale configuration and monitoring
+  - `/vl53l1x` - VL53L1X distance sensor configuration and monitoring
+  - `/lsm6ds3` - LSM6DS3 IMU configuration, calibration, and angle monitoring
+  - `/gp8403` - GP8403 DAC configuration and output control
+  - `/mcp230xx` - MCP230XX GPIO expander configuration and control
+  - `/i2c` - I2C bus pull-up resistor configuration
 
 - **REST API Endpoints**
   - Complete REST API with comprehensive JSON endpoints
@@ -604,7 +608,10 @@ All API endpoints return JSON responses. See component documentation for complet
   - Increased socket limits (64 sockets, 128 UDP PCBs)
   - Larger TCP buffers (32KB send/receive windows)
   - IRAM optimizations for real-time performance
-  - Task affinity configured for optimal core assignment
+  - Task affinity configured for optimal core assignment:
+    - **Core 0**: Network services (LWIP TCP/IP task, OpENer EtherNet/IP task, Web server)
+    - **Core 1**: I/O services (sensor reading tasks: VL53L1X, LSM6DS3, NAU7802, GP8403, MCP230XX)
+    - This separation provides dedicated CPU resources for real-time network communication while isolating I/O operations
 - See [LWIP Modifications Documentation](docs/LWIP_MODIFICATIONS.md) for complete details
 
 ---
