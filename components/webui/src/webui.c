@@ -270,6 +270,12 @@ bool webui_init(void)
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
     
+    // Reduce log level for httpd components to suppress harmless parsing warnings
+    // These warnings occur when network scanners/bots probe port 80 with non-HTTP data
+    // They are harmless but can clutter the logs
+    esp_log_level_set("httpd_parse", ESP_LOG_ERROR);
+    esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
+    
     // Note: TCP_NODELAY (Nagle's algorithm disabled) would improve Web API responsiveness
     // but ESP-IDF httpd manages sockets internally and doesn't expose a socket callback.
     // To enable TCP_NODELAY for HTTP server, use an lwIP hook or patch ESP-IDF httpd component.

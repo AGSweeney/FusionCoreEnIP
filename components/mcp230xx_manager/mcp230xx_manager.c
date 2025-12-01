@@ -7,6 +7,7 @@
 #include "mcp23008_init.h"
 #include "mcp23017.h"
 #include "mcp23017_init.h"
+#include "ota_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -51,6 +52,15 @@ static void mcp230xx_update_task(void *pvParameters)
     ESP_LOGI(TAG, "MCP230XX update task started");
 
     while (1) {
+        // Check if OTA is in progress - skip I2C operations to avoid errors
+        ota_status_info_t ota_status;
+        if (ota_manager_get_status(&ota_status) && 
+            ota_status.status == OTA_STATUS_IN_PROGRESS) {
+            // OTA in progress - skip I2C operations to avoid errors
+            vTaskDelay(update_interval);
+            continue;
+        }
+        
         if (s_initialized) {
             uint8_t local_output_assembly[16] = {0};
             SemaphoreHandle_t assembly_mutex = fusion_core_get_assembly_mutex();

@@ -4,5 +4,6 @@ idf_component_register(SRCS "gp8403_dac_manager.c"
                     REQUIRES i2c_bus_manager
                             gp8403_dac
                             system_config
-                            opener)
+                            opener
+                            ota_manager)
 

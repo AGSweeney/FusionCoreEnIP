@@ -4,6 +4,7 @@
 #include "fusion_core_assembly.h"
 #include "lsm6ds3.h"
 #include "lsm6ds3_fusion.h"
+#include "ota_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "nvs_flash.h"
@@ -37,6 +38,15 @@ static void lsm6ds3_update_task(void *pvParameters)
     ESP_LOGI(TAG, "LSM6DS3 update task started");
 
     while (1) {
+        // Check if OTA is in progress - skip I2C operations to avoid errors
+        ota_status_info_t ota_status;
+        if (ota_manager_get_status(&ota_status) && 
+            ota_status.status == OTA_STATUS_IN_PROGRESS) {
+            // OTA in progress - skip I2C operations to avoid errors
+            vTaskDelay(update_interval);
+            continue;
+        }
+        
         if (s_initialized) {
             float accel_mg[3] = {0};
             float gyro_mdps[3] = {0};

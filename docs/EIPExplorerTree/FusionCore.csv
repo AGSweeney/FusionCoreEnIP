@@ -1,0 +1,536 @@
+Device IP;Name;Class;ClassName;Instance;InstanceName;Attribute;AttributeName
+// EnIPExplorer Device Tree, can be modified with a spreadsheet
+172.16.82.155;FusionCoreEnIP
+;;1;Identity #1
+;;;;1;Instance #1
+;;;;;;1;Vendor ID
+;;;;;;2;Device Type
+;;;;;;3;Product Code
+;;;;;;4;Revision
+;;;;;;5;Status
+;;;;;;6;Serial Number
+;;;;;;7;Product Name
+;;2;MessageRouter #2
+;;;;1;Instance #1
+;;4;Assembly #4
+;;;;100;Input Assembly
+;;;;;;3;Data
+;;;;150;Output Assembly
+;;;;;;3;Data
+;;;;151;Config Assembly
+;;;;;;3;Data
+;;6;ConnectionManager #6
+;;15;Parameter #15
+;;;;1;IP Address
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;2;Subnet Mask
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;3;Gateway
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;4;DNS Server 1
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;5;DNS Server 2
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;6;DHCP Enabled
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;7;Hostname
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;8;Domain Name
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;9;Multicast TTL
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;10;NAU7802 Enabled
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;11;NAU7802 Unit
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;12;NAU7802 Gain
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;13;NAU7802 Sample Rate
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;14;NAU7802 Channel
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;15;NAU7802 LDO
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;16;NAU7802 Average
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;17;NAU7802 Cal Factor
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;18;NAU7802 Zero Offset
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;19;(Unused)
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;20;ACD Enabled
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;21;ACD Timeout
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;22;VL53L1X Enabled
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;23;VL53L1X Distance Mode
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;24;VL53L1X Timing Budget
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;25;VL53L1X Inter-Measurement
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;26;VL53L1X ROI X Size
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;27;VL53L1X ROI Y Size
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;28;VL53L1X ROI Center SPAD
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;29;VL53L1X Offset
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;30;VL53L1X Crosstalk
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;31;VL53L1X Signal Threshold
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;32;VL53L1X Sigma Threshold
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;33;VL53L1X Threshold Low
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;34;VL53L1X Threshold High
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;35;VL53L1X Threshold Window
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;36;VL53L1X Interrupt Polarity
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;37;VL53L1X I2C Address
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;38;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;39;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;40;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;41;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;42;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;43;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;44;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;45;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;46;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;47;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;48;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;49;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;50;Default RPI
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;51;Max Connections
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;52;Reserved
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;53;Assembly 100 Size
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;;;54;Assembly 150 Size
+;;;;;;1;Parameter Name
+;;;;;;2; Parameter Value
+;;;;;;3;Parameter Units
+;;;;;;4;Help String
+;;;;;;5;Minimum Value
+;;;;;;6;Maximum Value
+;;;;;;7;Default Value
+;;;;;;8;Data Type Code
+;;55;File #55
+;;72;QoS #72
+;;245;TCPIPInterface #245
+;;;;1;Instance #1
+;;;;;;1;Status
+;;;;;;2;Configuration Capability
+;;;;;;3;Configuration Control
+;;;;;;4;Physical Link Object
+;;;;;;5;Interface Configuration
+;;;;;;6;Host Name
+;;;;;;7;IP Address
+;;;;;;8;Subnet Mask
+;;;;;;9;Gateway Address
+;;;;;;10;Name Server
+;;;;;;11;Name Server 2
+;;;;;;12;Domain Name
+;;246;EtherNetLink #246
+;;;;1;Instance #1
+;;;;;;1;Interface Speed
+;;;;;;2;Interface Flags
+;;;;;;3;Physical Address
+;;;;;;4;Interface Counters
+;;;;;;5;Media Type
+;;;;;;6;Interface Type
+;;;;;;7;Administrative Control
+;;265;Proprietary #265
+;;266;Proprietary #266

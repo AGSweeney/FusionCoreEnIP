@@ -19,6 +19,7 @@
 /* Include headers of objects that need support for NV data here. */
 #include "nvqos.h"
 #include "nvtcpip.h"
+#include "cipqos.h"
 
 /** @brief Load NV data for all object classes
  *
@@ -36,12 +37,15 @@
 EipStatus NvdataLoad(void) {
   /* Load NV data for QoS object instance */
   EipStatus eip_status = NvQosLoad(&g_qos);
-  if (kEipStatusError != eip_status) {
-    eip_status =
-      ( kEipStatusError == NvQosStore(&g_qos) ) ? kEipStatusError : eip_status;
-  }
-
-  return eip_status;
+  /* If load fails, use defaults (already set in g_qos initialization) */
+  /* If load succeeds, values are already loaded into g_qos */
+  /* No need to store after load - values are already in memory */
+  (void)eip_status;  /* Load failure is acceptable - defaults will be used */
+  
+  /* Update the active set of DSCP values from g_qos (whether loaded or defaults) */
+  CipQosUpdateUsedSetQosValues();
+  
+  return kEipStatusOk;  /* Always return success - defaults are valid */
 }
 
 /** A PostSetCallback for QoS class to store NV attributes

@@ -66,6 +66,12 @@ CipClass *CreateAssemblyClass(void) {
                   &SetAttributeSingle,
                   "SetAttributeSingle");
 
+    /* Note: Get_Attribute_All and Set_Attribute_All are not commonly implemented
+     * for Assembly objects per CIP specification. Assembly objects are primarily
+     * used for I/O data transfer via implicit messaging. Explicit messaging typically
+     * uses Get_Attribute_Single and Set_Attribute_Single only.
+     */
+
     InsertGetSetCallback(assembly_class, AssemblyPreGetCallback, kPreGetFunc);
     InsertGetSetCallback(assembly_class, AssemblyPostSetCallback, kPostSetFunc);
   }

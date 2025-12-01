@@ -23,6 +23,34 @@ The device implements RFC 5227 compliant Address Conflict Detection (ACD) for bo
 - The setting applies to **both static IP and DHCP** configurations
 - The boot process **no longer auto-enables ACD** - it respects the user's saved preference
 
+### ACD Timeout (Parameter Object Instance #21)
+
+**Class**: 0x0F (Parameter Object)  
+**Instance**: #21 (`ACD Timeout`)  
+**Type**: UINT (2 bytes)  
+**Access**: Get/Set  
+**Units**: seconds  
+**Range**: 1-3600 seconds  
+**Default**: 10 seconds  
+**Persistent**: No (runtime setting, not stored in NVS)
+
+The ACD Timeout parameter controls the **DEFEND_INTERVAL** timeout used in RFC 5227 conflict handling. This timeout determines how long the device will defend its IP address after detecting a conflict before retreating on a second conflict.
+
+**How It Works**:
+- When a conflict is detected during the **ongoing phase** (after IP is assigned), the device sets a `lastconflict` timer
+- The timer duration is set to the ACD Timeout value (default: 10 seconds)
+- If a **second conflict** occurs while this timer is still active (within the timeout period), the device **retreats** and removes the IP address
+- If the timer expires without a second conflict, the device continues normal operation
+
+**Configuration**:
+- Accessible via EtherNet/IP Parameter Object (Class 0x0F, Instance #21, Attribute #2)
+- Changes take effect on the next conflict detection (no reboot required)
+- Value is not persisted to NVS - it resets to default (10 seconds) on reboot
+
+**RFC 5227 Compliance**:
+- Default value of 10 seconds matches RFC 5227 DEFEND_INTERVAL recommendation
+- Configurable range (1-3600 seconds) allows customization for different network environments
+
 ### Quick Summary
 
 **Boot Conflict (Probe Phase)**:
@@ -191,7 +219,7 @@ When the device has successfully acquired an IP address and another device attem
    - Conflict data is captured and stored
    - Sets `lastconflict` timer to track DEFEND_INTERVAL
 
-2. **Second Conflict** (within DEFEND_INTERVAL, ~10 seconds after first):
+2. **Second Conflict** (within DEFEND_INTERVAL, configured via Parameter Object Instance #21):
    - Device detects another conflict while `lastconflict` timer is still active
    - **Retreat Action**: Calls `acd_restart()` which triggers conflict callback
    - **IP Removal**: IP address is **removed** (set to 0.0.0.0)
@@ -201,13 +229,14 @@ When the device has successfully acquired an IP address and another device attem
      - Retries the full ACD probe sequence
      - Retries up to `CONFIG_OPENER_ACD_RETRY_MAX_ATTEMPTS` times (default: 5)
 
-**Result**: Device defends the first conflict but retreats and retries if a second conflict occurs within 10 seconds.
+**Result**: Device defends the first conflict but retreats and retries if a second conflict occurs within the configured ACD Timeout period (default: 10 seconds).
 
 ### RFC 5227 Defense Strategy
 
 The device uses **RFC 5227 option (b)**:
 - **First conflict**: Defend by sending ARP announcement (keeps IP)
 - **Second conflict within DEFEND_INTERVAL**: Retreat (removes IP and retries)
+- **DEFEND_INTERVAL**: Configurable via Parameter Object Instance #21 (ACD Timeout), default: 10 seconds
 - This strategy helps improve network stability by allowing one of two conflicting hosts to retain its address while being flexible enough to help network performance
 
 ### DHCP Mode
@@ -274,6 +303,21 @@ If `CONFIG_OPENER_ACD_RETRY_ENABLED` is enabled:
 - Configurable via `CONFIG_OPENER_ACD_PERIODIC_DEFEND_INTERVAL_MS`
 - Default: 90000ms (90 seconds)
 - Matches typical Rockwell PLC behavior
+- Controls how often the device sends defensive ARP probes to actively defend its IP address
+
+### ACD Timeout Configuration
+
+The ACD Timeout (Parameter Object Instance #21) can be configured via EtherNet/IP:
+
+**Via EtherNet/IP CIP Tool** (e.g., Molex EtherNet/IP Tools, Rockwell Studio 5000):
+1. Connect to device via EtherNet/IP
+2. Browse to Parameter Object (Class 0x0F, Instance #21)
+3. Write Attribute #2 (Parameter Value):
+   - **Value**: 1-3600 (seconds)
+   - **Default**: 10 seconds
+4. Changes take effect on the next conflict detection (no reboot required)
+
+**Note**: The ACD Timeout value is not persisted to NVS - it resets to the default (10 seconds) on reboot. This is a runtime configuration parameter.
 
 ## Accessing Conflict Data
 
@@ -291,7 +335,7 @@ Use an EtherNet/IP configuration tool (e.g., Rockwell Studio 5000, Molex EtherNe
 
 ### Via Web API
 
-Currently, conflict data is not exposed via the Web API. This could be added as a future enhancement.
+Conflict data is not currently exposed via the Web API. Access conflict information via EtherNet/IP CIP Attribute #11 or serial logs.
 
 ### Via Serial Logs
 
@@ -427,15 +471,17 @@ The implementation uses a callback tracking mechanism to prevent false positive 
 - **Implementation Details**: ARP frame storage implementation is documented in this document (see "Conflict Data Capture" and "EtherNet/IP Attribute #11 Storage" sections above)
 - **Wireshark Filters**: See `docs/WIRESHARK_FILTERS.md` for debugging ACD conflicts
 
-## Recent Changes
+## Implementation Status
 
-### ACD Control via Attribute #10 (2025)
+### ACD Control via Attribute #10
 
-**Changes Made**:
-1. **Persistent ACD Setting**: Attribute #10 (`select_acd`) now persists across reboots via NVS storage
-2. **Boot Process Fix**: Removed auto-enable code that was overriding user's ACD preference on boot
-3. **DHCP ACD Control**: DHCP now respects the ACD setting - ACD only runs if `select_acd = 1`
-4. **Static IP ACD Control**: Static IP already respected the setting, but now it's properly checked in all code paths
+**Status**: ✅ Fully Implemented and Functional
+
+**Features**:
+1. **Persistent ACD Setting**: Attribute #10 (`select_acd`) persists across reboots via NVS storage
+2. **Boot Process**: Respects user's saved ACD preference on boot (no auto-enable override)
+3. **DHCP ACD Control**: DHCP respects the ACD setting - ACD only runs if `select_acd = 1`
+4. **Static IP ACD Control**: Static IP respects the ACD setting in all code paths
 
 **Implementation Details**:
 - `DecodeTcpIpSelectAcd()` saves the setting to NVS when attribute #10 is written
@@ -445,13 +491,7 @@ The implementation uses a callback tracking mechanism to prevent false positive 
 - `tcpip_try_pending_acd()` in `main.c` checks ACD status before starting static IP ACD
 
 **User Impact**:
-- Users can now disable ACD via attribute #10 and it will persist across reboots
+- Users can disable ACD via attribute #10 and it persists across reboots
 - Both static IP and DHCP configurations respect the ACD setting
-- No more unexpected ACD behavior after reboot
-
----
-
-**Last Updated**: 2025  
-**Status**: ✅ Implemented and Functional  
-**ACD Control**: ✅ Attribute #10 fully functional, persists across reboots
+- Consistent ACD behavior after reboot
 

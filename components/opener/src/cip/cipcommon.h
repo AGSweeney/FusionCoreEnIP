@@ -91,6 +91,25 @@ EipStatus SetAttributeSingle(
   const struct sockaddr *originator_address,
   const CipSessionHandle encapsulation_session);
 
+/** @brief Generic implementation of the SetAttributeAll CIP service
+ *
+ *  Sets all settable attributes of an object instance in a single request.
+ *  Attributes are processed in the same order as GetAttributeAll returns them.
+ *  @param instance pointer to object instance with data.
+ *  @param message_router_request pointer to MR request.
+ *  @param message_router_response pointer for MR response.
+ *  @param originator_address address struct of the originator as received
+ *  @param encapsulation_session associated encapsulation session of the explicit message
+ *  @return status  >0 .. success
+ *          -1 .. error
+ */
+EipStatus SetAttributeAll(
+  CipInstance *RESTRICT const instance,
+  CipMessageRouterRequest *const message_router_request,
+  CipMessageRouterResponse *const message_router_response,
+  const struct sockaddr *originator_address,
+  const CipSessionHandle encapsulation_session);
+
 /** @brief Generic implementation of the GetAttributeAll CIP service
  *
  * Copy all attributes from Object into the global message buffer.

@@ -82,6 +82,12 @@
 #include "lwip/etharp.h"
 #include "sdkconfig.h"
 
+/* MODIFICATION: Forward declaration for ACD timeout access
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ * Allows ACD code to use the configurable timeout from TCP/IP Interface Object Attribute #12
+ */
+extern uint16_t CipTcpIpGetAcdTimeout(void);
+
 /*******************************************************************************
  * MODIFICATIONS BY: Adam G. Sweeney <agsweeney@gmail.com>
  *
@@ -822,7 +828,14 @@ acd_handle_arp_conflict(struct netif *netif, struct acd *acd)
       LWIP_DEBUGF(ACD_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE,
           ("acd_handle_arp_conflict(): we are defending, send ARP Announce\n"));
       etharp_acd_announce(netif, &acd->ipaddr);
-      acd->lastconflict = DEFEND_INTERVAL * ACD_TICKS_PER_SECOND;
+      /* MODIFICATION: Use configurable ACD timeout from Attribute #12
+       * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+       * Falls back to 10 seconds (DEFEND_INTERVAL) if not set in NVS
+       */
+      {
+        uint16_t acd_timeout_sec = CipTcpIpGetAcdTimeout();
+        acd->lastconflict = acd_timeout_sec * ACD_TICKS_PER_SECOND;
+      }
     }
   }
 }

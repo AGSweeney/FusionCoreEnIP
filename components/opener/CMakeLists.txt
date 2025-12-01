@@ -33,6 +33,8 @@ set(CIP_SRCS
     "${OPENER_SRC_DIR}/cip/cipidentity.c"
     "${OPENER_SRC_DIR}/cip/cipioconnection.c"
     "${OPENER_SRC_DIR}/cip/cipmessagerouter.c"
+    "${OPENER_SRC_DIR}/cip/cipparameter.c"
+    "${OPENER_SRC_DIR}/cip/cipport.c"
     "${OPENER_SRC_DIR}/cip/cipqos.c"
     "${OPENER_SRC_DIR}/cip/cipstring.c"
     "${OPENER_SRC_DIR}/cip/cipstringi.c"

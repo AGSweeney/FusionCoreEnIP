@@ -3,6 +3,7 @@
 #include "system_config.h"
 #include "fusion_core_assembly.h"
 #include "nau7802.h"
+#include "ota_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c_master.h"
@@ -38,6 +39,15 @@ static void nau7802_scale_task(void *pvParameters)
     ESP_LOGI(TAG, "NAU7802 scale task started, average samples: %d", average_samples);
     
     while (1) {
+        // Check if OTA is in progress - skip I2C operations to avoid errors
+        ota_status_info_t ota_status;
+        if (ota_manager_get_status(&ota_status) && 
+            ota_status.status == OTA_STATUS_IN_PROGRESS) {
+            // OTA in progress - skip I2C operations to avoid errors
+            vTaskDelay(update_interval);
+            continue;
+        }
+        
         TickType_t now = xTaskGetTickCount();
         if (now - last_config_reload >= config_reload_interval) {
             average_samples = system_nau7802_average_load();
@@ -55,9 +65,27 @@ static void nau7802_scale_task(void *pvParameters)
         }
         
         if (initialized) {
+            // Check OTA status again before I2C operations (in case it changed during config reload)
+            ota_status_info_t ota_status_check;
+            if (ota_manager_get_status(&ota_status_check) && 
+                ota_status_check.status == OTA_STATUS_IN_PROGRESS) {
+                // OTA in progress - skip I2C operations to avoid errors
+                vTaskDelay(update_interval);
+                continue;
+            }
+            
             bool connected = cached_connected;
             // Only check connection status periodically (every 5 seconds) to avoid I2C bus spam
             if (now - last_connection_check >= connection_check_interval) {
+                // Check OTA status before connection check I2C operation
+                ota_status_info_t ota_status_conn;
+                if (ota_manager_get_status(&ota_status_conn) && 
+                    ota_status_conn.status == OTA_STATUS_IN_PROGRESS) {
+                    // OTA in progress - skip I2C operations to avoid errors
+                    vTaskDelay(update_interval);
+                    continue;
+                }
+                
                 if (s_nau7802_mutex != NULL && xSemaphoreTake(s_nau7802_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                     connected = nau7802_is_connected(&s_nau7802_device);
                     if (connected != cached_connected) {
@@ -70,6 +98,15 @@ static void nau7802_scale_task(void *pvParameters)
             }
             
             if (connected) {
+                // Check OTA status one more time right before main I2C operations
+                ota_status_info_t ota_status_final;
+                if (ota_manager_get_status(&ota_status_final) && 
+                    ota_status_final.status == OTA_STATUS_IN_PROGRESS) {
+                    // OTA in progress - skip I2C operations to avoid errors
+                    vTaskDelay(update_interval);
+                    continue;
+                }
+                
                 bool available = false;
                 int32_t raw_reading = 0;
                 float weight_grams = 0.0f;

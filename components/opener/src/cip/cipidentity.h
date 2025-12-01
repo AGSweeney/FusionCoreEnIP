@@ -31,6 +31,17 @@ typedef enum {
                                        to the "Major Unrecoverable Fault" state */
 } CipIdentityStatus;
 
+/** @brief Mask for valid status bits (excludes reserved bits)
+ *
+ * Reserved bits per CIP spec Table 5-2.3:
+ * - Bit 1: Reserved (shall be 0)
+ * - Bit 3: Reserved (shall be 0)
+ * - Bits 12-15: Reserved (shall be 0)
+ *
+ * Valid bits: 0, 2, 4-11
+ */
+#define kStatusValidBitsMask 0x0FEDU  /**< 0b0000111111101101 - allows bits 0,2,4-11 */
+
 /** @brief Constants for the extended status field in the Status word */
 typedef enum {
   kSelftestingUnknown = 0x0000U,

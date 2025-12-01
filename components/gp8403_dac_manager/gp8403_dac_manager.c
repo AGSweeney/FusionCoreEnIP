@@ -3,6 +3,7 @@
 #include "system_config.h"
 #include "fusion_core_assembly.h"
 #include "gp8403_dac.h"
+#include "ota_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c_master.h"
@@ -35,6 +36,15 @@ static void gp8403_dac_update_task(void *pvParameters)
     ESP_LOGI(TAG, "GP8403 DAC update task started");
 
     while (1) {
+        // Check if OTA is in progress - skip I2C operations to avoid errors
+        ota_status_info_t ota_status;
+        if (ota_manager_get_status(&ota_status) && 
+            ota_status.status == OTA_STATUS_IN_PROGRESS) {
+            // OTA in progress - skip I2C operations to avoid errors
+            vTaskDelay(update_interval);
+            continue;
+        }
+        
         if (s_initialized) {
             uint16_t channel_values[GP8403_DAC_MAX_DEVICES * 2] = {0};
             SemaphoreHandle_t assembly_mutex = fusion_core_get_assembly_mutex();

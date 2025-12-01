@@ -24,6 +24,7 @@
   #include "cipdlr.h"
 #endif
 #include "cipqos.h"
+#include "cipport.h"
 #include "cpf.h"
 #include "trace.h"
 #include "appcontype.h"
@@ -63,9 +64,21 @@ EipStatus CipStackInit(const EipUint16 unique_connection_id) {
 #endif
   eip_status = CipQoSInit();
   OPENER_ASSERT(kEipStatusOk == eip_status);
+  eip_status = CipPortInit();
+  OPENER_ASSERT(kEipStatusOk == eip_status);
 
 #if defined(CIP_FILE_OBJECT) && 0 != CIP_FILE_OBJECT
   eip_status = CipFileInit();
+  OPENER_ASSERT(kEipStatusOk == eip_status);
+#endif
+
+#if defined(CIP_PARAMETER_OBJECT) && 0 != CIP_PARAMETER_OBJECT
+  /* Suppress unused typedef warning for CipParameterInstance - it's part of the API */
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wunused-local-typedefs"
+  #include "cipparameter.h"
+  #pragma GCC diagnostic pop
+  eip_status = CipParameterInit();
   OPENER_ASSERT(kEipStatusOk == eip_status);
 #endif
 
@@ -449,7 +462,7 @@ void InsertAttribute(CipInstance *const instance,
       cip_class->get_single_bit_mask[index] |=
         (cip_flags & kGetableSingle) ? 1 << (attribute_number) % 8 : 0;
       cip_class->get_all_bit_mask[index] |=
-        ( cip_flags & (kGetableAll | kGetableAllDummy) ) ? 1 <<
+        ( cip_flags & (kGetableAll | kGetableAllDummy | kGetableSingleAndAll) ) ? 1 <<
           (attribute_number) % 8 : 0;
       cip_class->set_bit_mask[index] |= ( (cip_flags & kSetable) ? 1 : 0 ) <<
                                         ( (attribute_number) % 8 );
@@ -796,6 +809,16 @@ void GenerateSetAttributeSingleHeader(
   message_router_response->size_of_additional_status = 0;
 }
 
+void GenerateSetAttributeAllHeader(
+  const CipMessageRouterRequest *const message_router_request,
+  CipMessageRouterResponse *const message_router_response) {
+  InitializeENIPMessage(&message_router_response->message);
+  message_router_response->reply_service =
+    (0x80 | message_router_request->service);
+  message_router_response->general_status = kCipErrorServiceNotSupported;
+  message_router_response->size_of_additional_status = 0;
+}
+
 EipStatus SetAttributeSingle(CipInstance *RESTRICT const instance,
                              CipMessageRouterRequest *const message_router_request,
                              CipMessageRouterResponse *const message_router_response,
@@ -856,6 +879,131 @@ EipStatus SetAttributeSingle(CipInstance *RESTRICT const instance,
       }
 
     }
+  }
+
+  return kEipStatusOkSend;
+}
+
+/** @brief Generic implementation of the SetAttributeAll CIP service
+ *
+ *  Sets all settable attributes of an object instance in a single request.
+ *  Attributes are processed in the same order as GetAttributeAll returns them.
+ *  Uses best-effort approach: sets attributes in sequence, returns first error encountered.
+ *
+ *  @param instance pointer to object instance with data.
+ *  @param message_router_request pointer to MR request.
+ *  @param message_router_response pointer for MR response.
+ *  @param originator_address address struct of the originator as received
+ *  @param encapsulation_session associated encapsulation session of the explicit message
+ *  @return kEipStatusOkSend on completion (success or error)
+ */
+EipStatus SetAttributeAll(CipInstance *RESTRICT const instance,
+                          CipMessageRouterRequest *const message_router_request,
+                          CipMessageRouterResponse *const message_router_response,
+                          const struct sockaddr *originator_address,
+                          const CipSessionHandle encapsulation_session) {
+  /* Suppress unused parameter compiler warning. */
+  (void)originator_address;
+  (void)encapsulation_session;
+
+  InitializeENIPMessage(&message_router_response->message);
+  GenerateSetAttributeAllHeader(message_router_request, message_router_response);
+
+  if (0 == instance->cip_class->number_of_attributes) {
+    message_router_response->general_status = kCipErrorServiceNotSupported;
+    return kEipStatusOkSend;
+  }
+
+  message_router_response->general_status = kCipErrorSuccess;
+
+  /* Track position in request data buffer */
+  EipUint8 *data_position = message_router_request->data;
+  EipInt16 remaining_data = message_router_request->request_data_size;
+
+  /* Iterate through all attributes (same order as GetAttributeAll) */
+  for (EipUint16 attr_num = 1; attr_num <= instance->cip_class->highest_attribute_number; attr_num++) {
+    /* Check if attribute is settable using set_bit_mask */
+    uint8_t set_bit_mask = instance->cip_class->set_bit_mask[CalculateIndex(attr_num)];
+    if (0 == (set_bit_mask & (1 << (attr_num % 8)))) {
+      /* Attribute not settable, skip it */
+      continue;
+    }
+
+    /* Find the attribute */
+    CipAttributeStruct *attribute = GetCipAttribute(instance, attr_num);
+    if (attribute == NULL || attribute->data == NULL) {
+      continue; /* Skip missing attributes */
+    }
+
+    /* Check if attribute is a dummy or not settable */
+    if ((attribute->attribute_flags == kGetableAllDummy) ||
+        (attribute->attribute_flags == kNotSetOrGetable) ||
+        (attribute->attribute_flags == kGetableAll)) {
+      continue; /* Skip non-settable attributes */
+    }
+
+    /* Check if we have enough data remaining */
+    if (remaining_data <= 0) {
+      message_router_response->general_status = kCipErrorNotEnoughData;
+      OPENER_TRACE_ERR("SetAttributeAll: Not enough data for attribute %d\n", attr_num);
+      return kEipStatusOkSend;
+    }
+
+    /* Create a temporary request structure for this attribute */
+    CipMessageRouterRequest temp_request = *message_router_request;
+    temp_request.data = data_position;
+    temp_request.request_data_size = remaining_data;
+    temp_request.request_path.attribute_number = attr_num;
+
+    /* Create a temporary response structure */
+    CipMessageRouterResponse temp_response = *message_router_response;
+    temp_response.general_status = kCipErrorSuccess;
+
+    /* Call PreSetCallback if enabled */
+    if ((attribute->attribute_flags & kPreSetFunc) &&
+        NULL != instance->cip_class->PreSetCallback) {
+      instance->cip_class->PreSetCallback(instance,
+                                          attribute,
+                                          message_router_request->service);
+    }
+
+    /* Decode the attribute value */
+    if (attribute->decode != NULL) {
+      int bytes_decoded = attribute->decode(attribute->data,
+                                            &temp_request,
+                                            &temp_response);
+
+      if (bytes_decoded < 0 || temp_response.general_status != kCipErrorSuccess) {
+        /* Decode failed */
+        message_router_response->general_status = temp_response.general_status;
+        OPENER_TRACE_ERR("SetAttributeAll: Failed to decode attribute %d (status=0x%02X)\n",
+                        attr_num, temp_response.general_status);
+        return kEipStatusOkSend;
+      }
+
+      /* Update data position and remaining count */
+      data_position += bytes_decoded;
+      remaining_data -= bytes_decoded;
+    } else {
+      /* No decode function - skip this attribute */
+      OPENER_TRACE_WARN("SetAttributeAll: Attribute %d has no decode function, skipping\n", attr_num);
+      continue;
+    }
+
+    /* Call PostSetCallback if enabled (triggers NVS save) */
+    if ((attribute->attribute_flags & (kPostSetFunc | kNvDataFunc)) &&
+        NULL != instance->cip_class->PostSetCallback) {
+      instance->cip_class->PostSetCallback(instance,
+                                           attribute,
+                                           message_router_request->service);
+    }
+  }
+
+  /* Check if we consumed all data (or have leftover) */
+  if (remaining_data > 0) {
+    OPENER_TRACE_WARN("SetAttributeAll: Extra data in request (%d bytes), but operation succeeded\n",
+                     remaining_data);
+    /* Don't return error - some attributes may have been set successfully */
   }
 
   return kEipStatusOkSend;
@@ -1123,7 +1271,23 @@ EipStatus GetAttributeAll(CipInstance *instance,
           /* only return attributes that are flagged as being part of GetAttributeAll */
           message_router_request->request_path.attribute_number = attr_num;
 
+          /* Call the PreGetCallback if enabled for this attribute and the class provides one. */
+          if( (attribute->attribute_flags & kPreGetFunc) &&
+              NULL != instance->cip_class->PreGetCallback ) {
+            instance->cip_class->PreGetCallback(instance,
+                                                attribute,
+                                                message_router_request->service);
+          }
+
           attribute->encode(attribute->data, &message_router_response->message);
+
+          /* Call the PostGetCallback if enabled for this attribute and the class provides one. */
+          if( (attribute->attribute_flags & kPostGetFunc) &&
+              NULL != instance->cip_class->PostGetCallback ) {
+            instance->cip_class->PostGetCallback(instance,
+                                                 attribute,
+                                                 message_router_request->service);
+          }
         }
       }
     }

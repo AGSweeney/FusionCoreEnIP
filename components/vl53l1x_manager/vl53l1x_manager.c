@@ -6,6 +6,7 @@
 #include "vl53l1x_types.h"
 #include "i2c_handler.h"
 #include "VL53L1X_api.h"
+#include "ota_manager.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c_master.h"
@@ -127,6 +128,15 @@ static void vl53l1x_update_task(void *pvParameters)
     ESP_LOGI(TAG, "VL53L1X update task started");
 
     while (1) {
+        // Check if OTA is in progress - skip I2C operations to avoid errors
+        ota_status_info_t ota_status;
+        if (ota_manager_get_status(&ota_status) && 
+            ota_status.status == OTA_STATUS_IN_PROGRESS) {
+            // OTA in progress - skip I2C operations to avoid errors
+            vTaskDelay(update_interval);
+            continue;
+        }
+        
         if (s_initialized) {
             uint8_t is_data_ready = 0;
             VL53L1X_ERROR err = VL53L1X_CheckForDataReady(s_vl53l1x_device.dev, &is_data_ready);

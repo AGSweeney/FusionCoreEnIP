@@ -59,6 +59,9 @@ typedef struct {
   MulticastAddressConfiguration mcast_config;
   CipBool select_acd; /**< attribute #10 - Is ACD enabled? */
 
+  /** #12 EtherNet/IP Quick_Connect (enable/disable Quick Connect feature) */
+  CipBool quick_connect;
+
   /** #13 Number of seconds of inactivity before TCP connection is closed */
   CipUint encapsulation_inactivity_timeout;
 } CipTcpIpObject;
@@ -112,5 +115,13 @@ CipBool CipTcpIpIsValidNetworkConfig(const CipTcpIpInterfaceConfiguration *if_cf
  * Note: Returns uint8_t to avoid header dependencies in lwIP code
  */
 uint8_t CipTcpIpIsAcdEnabled(void);
+
+/* MODIFICATION: Function to get ACD timeout value from Parameter Object
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ * Returns the ACD timeout in seconds from Parameter Object Instance #21
+ * Falls back to 10 seconds (RFC 5227 DEFEND_INTERVAL) if not set or invalid
+ * Note: Returns uint16_t to avoid header dependencies in lwIP code
+ */
+uint16_t CipTcpIpGetAcdTimeout(void);
 
 #endif /* OPENER_CIPTCPIPINTERFACE_H_ */

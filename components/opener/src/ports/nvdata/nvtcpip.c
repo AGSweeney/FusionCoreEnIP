@@ -61,6 +61,21 @@ typedef struct __attribute__((packed)) {
   uint8_t hostname[TCPIP_HOSTNAME_MAX_LEN];
 } TcpipNvBlobV1;
 
+typedef struct __attribute__((packed)) {
+  uint32_t version;
+  uint32_t config_control;
+  uint32_t ip_address;
+  uint32_t network_mask;
+  uint32_t gateway;
+  uint32_t name_server;
+  uint32_t name_server2;
+  uint16_t domain_length;
+  uint16_t hostname_length;
+  uint8_t domain[TCPIP_DOMAIN_MAX_LEN];
+  uint8_t hostname[TCPIP_HOSTNAME_MAX_LEN];
+  uint8_t select_acd;
+} TcpipNvBlobV2;
+
 static esp_err_t TcpipNvOpen(nvs_handle_t *handle, nvs_open_mode_t mode) {
   esp_err_t err = nvs_open(TCPIP_NVS_NAMESPACE, mode, handle);
   if (ESP_ERR_NVS_NOT_FOUND == err && mode == NVS_READWRITE) {
@@ -101,14 +116,22 @@ EipStatus NvTcpipLoad(CipTcpIpObject *p_tcp_ip) {
     return kEipStatusError;
   }
 
-  const TcpipNvBlob *blob_v2 = NULL;
+  const TcpipNvBlob *blob_v3 = NULL;
+  const TcpipNvBlobV2 *blob_v2 = NULL;
   TcpipNvBlobV1 blob_v1 = {0};
 
   if (length == sizeof(TcpipNvBlob)) {
-    blob_v2 = (const TcpipNvBlob *)raw_blob;
-    if (blob_v2->version != TCPIP_NV_VERSION) {
+    blob_v3 = (const TcpipNvBlob *)raw_blob;
+    /* Accept version 2 */
+    if (blob_v3->version != TCPIP_NV_VERSION) {
       ESP_LOGW(kTag, "Stored TCP/IP configuration has unexpected version %" PRIu32,
-               blob_v2->version);
+               blob_v3->version);
+      return kEipStatusError;
+    }
+  } else if (length == sizeof(TcpipNvBlobV2)) {
+    blob_v2 = (const TcpipNvBlobV2 *)raw_blob;
+    if (blob_v2->version != 2U) {
+      ESP_LOGW(kTag, "Stored TCP/IP configuration has incompatible format");
       return kEipStatusError;
     }
   } else if (length == sizeof(TcpipNvBlobV1)) {
@@ -122,7 +145,15 @@ EipStatus NvTcpipLoad(CipTcpIpObject *p_tcp_ip) {
     return kEipStatusError;
   }
 
-  if (blob_v2 != NULL) {
+  if (blob_v3 != NULL) {
+    p_tcp_ip->config_control = blob_v3->config_control;
+    p_tcp_ip->interface_configuration.ip_address = blob_v3->ip_address;
+    p_tcp_ip->interface_configuration.network_mask = blob_v3->network_mask;
+    p_tcp_ip->interface_configuration.gateway = blob_v3->gateway;
+    p_tcp_ip->interface_configuration.name_server = blob_v3->name_server;
+    p_tcp_ip->interface_configuration.name_server_2 = blob_v3->name_server2;
+    p_tcp_ip->select_acd = (blob_v3->select_acd != 0u);
+  } else if (blob_v2 != NULL) {
     p_tcp_ip->config_control = blob_v2->config_control;
     p_tcp_ip->interface_configuration.ip_address = blob_v2->ip_address;
     p_tcp_ip->interface_configuration.network_mask = blob_v2->network_mask;
@@ -169,12 +200,14 @@ EipStatus NvTcpipLoad(CipTcpIpObject *p_tcp_ip) {
            dns2_print);
 
   ClearCipString(&p_tcp_ip->interface_configuration.domain_name);
-  uint16_t domain_length = blob_v2 ? blob_v2->domain_length : blob_v1.domain_length;
+  uint16_t domain_length = blob_v3 ? blob_v3->domain_length : 
+                           (blob_v2 ? blob_v2->domain_length : blob_v1.domain_length);
   if (domain_length > TCPIP_DOMAIN_MAX_LEN) {
     domain_length = TCPIP_DOMAIN_MAX_LEN;
   }
   if (domain_length > 0u) {
-    const uint8_t *domain_src = blob_v2 ? blob_v2->domain : blob_v1.domain;
+    const uint8_t *domain_src = blob_v3 ? blob_v3->domain : 
+                                (blob_v2 ? blob_v2->domain : blob_v1.domain);
     if (NULL == SetCipStringByData(&p_tcp_ip->interface_configuration.domain_name,
                                    domain_length,
                                    domain_src)) {
@@ -184,12 +217,14 @@ EipStatus NvTcpipLoad(CipTcpIpObject *p_tcp_ip) {
   }
 
   ClearCipString(&p_tcp_ip->hostname);
-  uint16_t hostname_length = blob_v2 ? blob_v2->hostname_length : blob_v1.hostname_length;
+  uint16_t hostname_length = blob_v3 ? blob_v3->hostname_length : 
+                            (blob_v2 ? blob_v2->hostname_length : blob_v1.hostname_length);
   if (hostname_length > TCPIP_HOSTNAME_MAX_LEN) {
     hostname_length = TCPIP_HOSTNAME_MAX_LEN;
   }
   if (hostname_length > 0u) {
-    const uint8_t *hostname_src = blob_v2 ? blob_v2->hostname : blob_v1.hostname;
+    const uint8_t *hostname_src = blob_v3 ? blob_v3->hostname : 
+                                  (blob_v2 ? blob_v2->hostname : blob_v1.hostname);
     if (NULL == SetCipStringByData(&p_tcp_ip->hostname,
                                    hostname_length,
                                    hostname_src)) {
@@ -217,7 +252,7 @@ EipStatus NvTcpipLoad(CipTcpIpObject *p_tcp_ip) {
     }
   }
 
-  if (blob_v2 == NULL) {
+  if (blob_v3 == NULL) {
     /* Upgrade legacy blob to latest format */
     (void)NvTcpipStore(p_tcp_ip);
   }

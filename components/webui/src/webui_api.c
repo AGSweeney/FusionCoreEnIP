@@ -397,13 +397,14 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
             return send_json_error(req, "Failed to allocate memory", 500);
         }
         
-        // Keep a buffer of the last chunk to search for boundary when connection closes
-        // We'll keep the last 4KB to ensure we catch the boundary (boundary + multipart overhead can be ~1KB)
-        const size_t last_chunk_buffer_size = 4096;
-        char *last_chunk_buffer = malloc(last_chunk_buffer_size);
-        size_t last_chunk_size = 0;
-        if (last_chunk_buffer == NULL) {
-            ESP_LOGE(TAG, "Failed to allocate last chunk buffer");
+        // Keep a small rolling buffer to detect boundaries that might be split across chunks
+        // Boundary can be up to ~200 bytes, so we need overlap of previous chunk's end
+        // Use 2KB buffer - enough for boundary + some overlap, but small enough to manage
+        const size_t boundary_overlap_buffer_size = 2048;
+        char *boundary_overlap_buffer = malloc(boundary_overlap_buffer_size);
+        size_t boundary_overlap_buffer_fill = 0;
+        if (boundary_overlap_buffer == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate boundary overlap buffer");
             free(chunk_buffer);
             esp_ota_abort(ota_handle);
             return send_json_error(req, "Failed to allocate memory", 500);
@@ -421,6 +422,8 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
         }
         
         while (!done) {
+            // Read chunk from socket - may return less than chunk_size (especially near end of upload)
+            // This is normal socket behavior - ret will be the actual bytes available
             int ret = httpd_req_recv(req, chunk_buffer, chunk_size);
             if (ret <= 0) {
                 if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
@@ -443,66 +446,80 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
                         ESP_LOGI(TAG, "Connection closed by client after boundary found, total written: %d bytes", total_written);
                         break;
                     } else {
-                        // Connection closed without finding boundary - search the last chunk buffer
-                        if (last_chunk_size > 0) {
-                            ESP_LOGI(TAG, "Searching last %d bytes for boundary after connection close", last_chunk_size);
-                            char *boundary_pos = NULL;
+                        // Connection closed without finding boundary - search overlap buffer
+                        if (boundary_overlap_buffer_fill > 0) {
+                            ESP_LOGI(TAG, "Searching overlap buffer (%d bytes) for boundary after connection close", boundary_overlap_buffer_fill);
+                            char *boundary_pos_found = NULL;
                             
-                            // Search for end boundary first
-                            char *end_match = (char *)memmem(last_chunk_buffer, last_chunk_size, end_boundary, strlen(end_boundary));
+                            // Search overlap buffer for boundary
+                            char *end_match = (char *)memmem(boundary_overlap_buffer, boundary_overlap_buffer_fill, end_boundary, strlen(end_boundary));
                             if (end_match != NULL) {
-                                // Verify it's actually a boundary by checking for \r\n before it
-                                if (end_match == last_chunk_buffer || 
-                                    (end_match > last_chunk_buffer && end_match[-1] == '\n' && 
-                                     (end_match == last_chunk_buffer + 1 || end_match[-2] == '\r'))) {
-                                    boundary_pos = end_match;
+                                bool is_valid = false;
+                                if (end_match == boundary_overlap_buffer) {
+                                    is_valid = true;
+                                } else if (end_match > boundary_overlap_buffer && end_match[-1] == '\n') {
+                                    if (end_match > boundary_overlap_buffer + 1 && end_match[-2] == '\r') {
+                                        is_valid = true;
+                                    } else if (end_match == boundary_overlap_buffer + 1) {
+                                        is_valid = true;
+                                    }
+                                }
+                                if (is_valid) {
+                                    boundary_pos_found = end_match;
                                 }
                             }
                             
                             // If not found, check for start boundary
-                            if (boundary_pos == NULL) {
-                                char *start_match = (char *)memmem(last_chunk_buffer, last_chunk_size, start_boundary, strlen(start_boundary));
+                            if (boundary_pos_found == NULL) {
+                                char *start_match = (char *)memmem(boundary_overlap_buffer, boundary_overlap_buffer_fill, start_boundary, strlen(start_boundary));
                                 if (start_match != NULL) {
-                                    // Verify it's actually a boundary
-                                    if (start_match == last_chunk_buffer || 
-                                        (start_match > last_chunk_buffer && start_match[-1] == '\n' && 
-                                         (start_match == last_chunk_buffer + 1 || start_match[-2] == '\r'))) {
+                                    bool is_valid = false;
+                                    if (start_match == boundary_overlap_buffer) {
+                                        is_valid = true;
+                                    } else if (start_match > boundary_overlap_buffer && start_match[-1] == '\n') {
+                                        if (start_match > boundary_overlap_buffer + 1 && start_match[-2] == '\r') {
+                                            is_valid = true;
+                                        } else if (start_match == boundary_overlap_buffer + 1) {
+                                            is_valid = true;
+                                        }
+                                    }
+                                    if (is_valid) {
                                         size_t end_boundary_len = strlen(end_boundary);
-                                        if (start_match + end_boundary_len > last_chunk_buffer + last_chunk_size || 
+                                        if (start_match + end_boundary_len > boundary_overlap_buffer + boundary_overlap_buffer_fill || 
                                             memcmp(start_match, end_boundary, end_boundary_len) != 0) {
-                                            boundary_pos = start_match;
+                                            boundary_pos_found = start_match;
                                         }
                                     }
                                 }
                             }
                             
-                            if (boundary_pos != NULL) {
-                                // Found boundary in last chunk - calculate how much we wrote too many
-                                size_t bytes_before_boundary = boundary_pos - last_chunk_buffer;
+                            if (boundary_pos_found != NULL) {
+                                // Found boundary in overlap buffer - this means we wrote too much
+                                size_t bytes_before_boundary = boundary_pos_found - boundary_overlap_buffer;
                                 // Remove trailing \r\n
                                 while (bytes_before_boundary > 0 && 
-                                       (last_chunk_buffer[bytes_before_boundary - 1] == '\r' || 
-                                        last_chunk_buffer[bytes_before_boundary - 1] == '\n')) {
+                                       (boundary_overlap_buffer[bytes_before_boundary - 1] == '\r' || 
+                                        boundary_overlap_buffer[bytes_before_boundary - 1] == '\n')) {
                                     bytes_before_boundary--;
                                 }
                                 if (bytes_before_boundary >= 2 && 
-                                    last_chunk_buffer[bytes_before_boundary - 2] == '\r' && 
-                                    last_chunk_buffer[bytes_before_boundary - 1] == '\n') {
+                                    boundary_overlap_buffer[bytes_before_boundary - 2] == '\r' && 
+                                    boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
                                     bytes_before_boundary -= 2;
                                 } else if (bytes_before_boundary >= 1 && 
-                                           last_chunk_buffer[bytes_before_boundary - 1] == '\n') {
+                                           boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
                                     bytes_before_boundary -= 1;
                                 }
                                 
-                                // Calculate how many extra bytes we wrote
-                                size_t extra_bytes = last_chunk_size - bytes_before_boundary;
-                                if (extra_bytes > 0 && total_written >= extra_bytes) {
-                                    ESP_LOGW(TAG, "Found boundary in last chunk - wrote %d extra bytes, but cannot undo write", extra_bytes);
-                                    // Note: We can't undo the write, but at least we know where the boundary was
-                                }
-                                ESP_LOGI(TAG, "Boundary found in last chunk at offset %d", (int)(boundary_pos - last_chunk_buffer));
+                                size_t extra_bytes = boundary_overlap_buffer_fill - bytes_before_boundary;
+                                ESP_LOGE(TAG, "Found boundary in overlap buffer after close - estimated %d extra bytes written (boundary at offset %d), aborting OTA", 
+                                         extra_bytes, (int)(boundary_pos_found - boundary_overlap_buffer));
+                                esp_ota_abort(ota_handle);
+                                free(chunk_buffer);
+                                free(boundary_overlap_buffer);
+                                return send_json_error(req, "Boundary detected in firmware data - upload corrupted, please retry", 400);
                             } else {
-                                ESP_LOGW(TAG, "Boundary not found in last %d bytes", last_chunk_size);
+                                ESP_LOGW(TAG, "Boundary not found in overlap buffer (%d bytes)", boundary_overlap_buffer_fill);
                             }
                         }
                         
@@ -520,61 +537,157 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
             }
             timeout_count = 0; // Reset timeout counter on successful read
             
-            // Search for boundary markers in this chunk
-            // Only search near the end of chunks to avoid false positives in binary data
-            // Binary firmware can contain any byte sequence, so we need to be careful
+            // Search for boundary - check current chunk first, then check for split boundaries
             char *boundary_pos = NULL;
             size_t to_write = ret;
+            size_t boundary_len = strlen(end_boundary);
+            size_t max_boundary_len = (strlen(start_boundary) > boundary_len) ? strlen(start_boundary) : boundary_len;
             
-            // Determine search range:
-            // - If chunk is small (< 1KB), search entire chunk (likely last chunk)
-            // - If we're close to expected end (within 1KB), search entire chunk
-            // - Otherwise, only search last 512 bytes to avoid false positives
-            size_t search_start_offset = 0;
-            size_t search_len = ret;
+            // Determine search range in current chunk:
+            // - If close to expected end (within 20KB), search entire chunk aggressively
+            // - Otherwise, search last portion to avoid false positives in binary data
+            size_t chunk_search_start = 0;
+            size_t chunk_search_len = ret;
             
-            if (ret > 1024) {
-                // Large chunk - only search last portion unless we're close to expected end
-                if (expected_firmware_bytes > 0 && total_written + ret >= expected_firmware_bytes - 2048) {
-                    // Close to expected end (within 2KB) - search entire chunk aggressively
-                    search_start_offset = 0;
-                    search_len = ret;
-                } else {
-                    // Not close to end - search last 1KB (increased for better detection)
-                    search_start_offset = (ret > 1024) ? (ret - 1024) : 0;
-                    search_len = (ret > 1024) ? 1024 : ret;
+            // Start searching entire chunks when we're within 20KB of expected end
+            // This ensures we catch the boundary early enough (boundary + multipart overhead can be ~1KB)
+            const size_t aggressive_search_threshold = 20 * 1024; // 20KB
+            
+            if (expected_firmware_bytes > 0) {
+                size_t remaining_bytes = expected_firmware_bytes - total_written;
+                if (remaining_bytes <= aggressive_search_threshold) {
+                    // Close to expected end - search entire chunk aggressively
+                    chunk_search_start = 0;
+                    chunk_search_len = ret;
+                    ESP_LOGD(TAG, "Aggressive search: remaining=%d, searching entire chunk of %d bytes", remaining_bytes, ret);
+                } else if (ret > max_boundary_len + 1024) {
+                    // Large chunk, not close to end - search last 1KB (increased from 512 for better detection)
+                    chunk_search_start = ret - (max_boundary_len + 1024);
+                    chunk_search_len = max_boundary_len + 1024;
                 }
+                // else: small chunk, search all of it
+            } else if (ret > max_boundary_len + 1024) {
+                // No expected size - search last 1KB
+                chunk_search_start = ret - (max_boundary_len + 1024);
+                chunk_search_len = max_boundary_len + 1024;
             }
-            // else: small chunk (< 1KB), search entire chunk
+            // else: small chunk, search all of it
             
-            char *search_start = chunk_buffer + search_start_offset;
+            // First, search current chunk directly for boundary
+            char *chunk_search_ptr = chunk_buffer + chunk_search_start;
             
-            // First check for end boundary (--boundary--) - this is the final boundary
-            char *end_match = (char *)memmem(search_start, search_len, end_boundary, strlen(end_boundary));
+            // Check for end boundary (--boundary--) first
+            char *end_match = (char *)memmem(chunk_search_ptr, chunk_search_len, end_boundary, strlen(end_boundary));
             if (end_match != NULL) {
-                // Verify it's actually a boundary by checking for \r\n before it
-                if (end_match == chunk_buffer || 
-                    (end_match > chunk_buffer && end_match[-1] == '\n' && 
-                     (end_match == chunk_buffer + 1 || end_match[-2] == '\r'))) {
+                // Verify it's actually a boundary - check for \r\n before it
+                bool is_valid_boundary = false;
+                if (end_match == chunk_buffer) {
+                    is_valid_boundary = true;
+                } else if (end_match > chunk_buffer) {
+                    if (end_match[-1] == '\n') {
+                        if (end_match > chunk_buffer + 1 && end_match[-2] == '\r') {
+                            is_valid_boundary = true; // \r\n
+                        } else if (end_match == chunk_buffer + 1) {
+                            is_valid_boundary = true; // Just \n at start
+                        }
+                    }
+                }
+                if (is_valid_boundary) {
                     boundary_pos = end_match;
+                    ESP_LOGI(TAG, "Found END boundary (--boundary--) at offset %d in chunk", (int)(end_match - chunk_buffer));
                 }
             }
             
-            // If not found, check for start boundary (--boundary) - this indicates next part
+            // If not found in chunk, check for start boundary (--boundary)
+            // Note: Start boundary indicates another part, but we only want the first part (firmware)
+            // So we should also stop on start boundary if we're past expected size
             if (boundary_pos == NULL) {
-                char *start_match = (char *)memmem(search_start, search_len, start_boundary, strlen(start_boundary));
+                char *start_match = (char *)memmem(chunk_search_ptr, chunk_search_len, start_boundary, strlen(start_boundary));
                 if (start_match != NULL) {
-                    // Verify it's actually a boundary by checking for \r\n before it
-                    if (start_match == chunk_buffer || 
-                        (start_match > chunk_buffer && start_match[-1] == '\n' && 
-                         (start_match == chunk_buffer + 1 || start_match[-2] == '\r'))) {
-                        // Make sure it's not the end boundary (which starts with the same string)
+                    // Verify it's actually a boundary
+                    bool is_valid_boundary = false;
+                    if (start_match == chunk_buffer) {
+                        is_valid_boundary = true;
+                    } else if (start_match > chunk_buffer) {
+                        if (start_match[-1] == '\n') {
+                            if (start_match > chunk_buffer + 1 && start_match[-2] == '\r') {
+                                is_valid_boundary = true;
+                            } else if (start_match == chunk_buffer + 1) {
+                                is_valid_boundary = true;
+                            }
+                        }
+                    }
+                    if (is_valid_boundary) {
+                        // Make sure it's not the end boundary
                         size_t end_boundary_len = strlen(end_boundary);
                         if (start_match + end_boundary_len > chunk_buffer + ret || 
                             memcmp(start_match, end_boundary, end_boundary_len) != 0) {
-                            boundary_pos = start_match;
+                            // Found start boundary - this indicates another part
+                            // If we're past expected size, treat this as end of firmware
+                            if (expected_firmware_bytes > 0 && total_written >= expected_firmware_bytes - 500) {
+                                ESP_LOGI(TAG, "Found START boundary (--boundary) at offset %d, but past expected size (%d >= %d), treating as end", 
+                                         (int)(start_match - chunk_buffer), total_written, expected_firmware_bytes - 500);
+                                boundary_pos = start_match;
+                            } else {
+                                ESP_LOGI(TAG, "Found START boundary (--boundary) at offset %d - indicates another part, stopping firmware write", 
+                                         (int)(start_match - chunk_buffer));
+                                boundary_pos = start_match;
+                            }
                         }
                     }
+                }
+            }
+            
+            // If boundary not found in current chunk, check for split boundary across chunks
+            // Combine overlap buffer (end of previous chunk) with start of current chunk
+            if (boundary_pos == NULL && boundary_overlap_buffer_fill > 0) {
+                // Create combined search area: overlap buffer + start of current chunk
+                size_t combined_search_size = boundary_overlap_buffer_fill + (ret < max_boundary_len + 100 ? ret : max_boundary_len + 100);
+                char *combined_search = malloc(combined_search_size);
+                if (combined_search != NULL) {
+                    // Copy overlap buffer (end of previous chunk)
+                    memcpy(combined_search, boundary_overlap_buffer, boundary_overlap_buffer_fill);
+                    // Copy start of current chunk
+                    size_t chunk_copy_size = (combined_search_size - boundary_overlap_buffer_fill < ret) ? 
+                                            (combined_search_size - boundary_overlap_buffer_fill) : ret;
+                    memcpy(combined_search + boundary_overlap_buffer_fill, chunk_buffer, chunk_copy_size);
+                    
+                    // Search combined area for boundary
+                    char *split_match = (char *)memmem(combined_search, combined_search_size, end_boundary, strlen(end_boundary));
+                    if (split_match == NULL) {
+                        split_match = (char *)memmem(combined_search, combined_search_size, start_boundary, strlen(start_boundary));
+                    }
+                    
+                    if (split_match != NULL) {
+                        // Verify it's a valid boundary
+                        bool is_valid = false;
+                        if (split_match == combined_search) {
+                            is_valid = true;
+                        } else if (split_match > combined_search && split_match[-1] == '\n') {
+                            if (split_match > combined_search + 1 && split_match[-2] == '\r') {
+                                is_valid = true;
+                            } else if (split_match == combined_search + 1) {
+                                is_valid = true;
+                            }
+                        }
+                        
+                        if (is_valid) {
+                            // Calculate where boundary is in current chunk
+                            size_t boundary_offset_in_combined = split_match - combined_search;
+                            if (boundary_offset_in_combined >= boundary_overlap_buffer_fill) {
+                                // Boundary is in current chunk
+                                size_t offset_in_chunk = boundary_offset_in_combined - boundary_overlap_buffer_fill;
+                                if (offset_in_chunk < ret) {
+                                    boundary_pos = chunk_buffer + offset_in_chunk;
+                                    ESP_LOGI(TAG, "Found split boundary at offset %d in chunk (split across chunks)", offset_in_chunk);
+                                }
+                            } else {
+                                // Boundary is in previous chunk (already written) - error
+                                ESP_LOGE(TAG, "Split boundary found in previous chunk data - may have written too much");
+                            }
+                        }
+                    }
+                    free(combined_search);
                 }
             }
             
@@ -600,25 +713,51 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
                 done = true;
             }
             
+            // Safety check: if we're already past expected size, limit what we write
+            // This prevents writing too much even if boundary detection fails
+            if (expected_firmware_bytes > 0 && total_written + to_write > expected_firmware_bytes + 1000) {
+                // We're writing way too much - limit to expected size
+                size_t max_allowed = (expected_firmware_bytes + 1000 > total_written) ? 
+                                     (expected_firmware_bytes + 1000 - total_written) : 0;
+                if (to_write > max_allowed) {
+                    ESP_LOGW(TAG, "Limiting write: would write %d bytes but only %d allowed (total_written=%d, expected=%d)", 
+                             to_write, max_allowed, total_written, expected_firmware_bytes);
+                    to_write = max_allowed;
+                    if (to_write == 0) {
+                        ESP_LOGW(TAG, "Stopping write - already exceeded expected size");
+                        done = true;
+                    }
+                }
+            }
+            
             if (to_write > 0) {
                 if (!ota_manager_write_streaming_chunk(ota_handle, (const uint8_t *)chunk_buffer, to_write)) {
                     ESP_LOGE(TAG, "Failed to write chunk at offset %d", total_written);
                     free(chunk_buffer);
-                    free(last_chunk_buffer);
+                    free(boundary_overlap_buffer);
                     return send_json_error(req, "Failed to write firmware data", 500);
                 }
                 total_written += to_write;
                 
-                // Update last chunk buffer for boundary detection on connection close
-                // Keep the last portion of this chunk (up to last_chunk_buffer_size)
-                if (to_write <= last_chunk_buffer_size) {
-                    // Entire chunk fits in buffer
-                    memcpy(last_chunk_buffer, chunk_buffer, to_write);
-                    last_chunk_size = to_write;
+                // Update overlap buffer with end of current chunk for next iteration
+                // Keep last portion of chunk in case boundary is split across chunks
+                size_t overlap_size = (ret < boundary_overlap_buffer_size) ? ret : boundary_overlap_buffer_size;
+                if (boundary_pos != NULL) {
+                    // Found boundary - only keep data before boundary
+                    if (boundary_pos > chunk_buffer) {
+                        size_t bytes_before_boundary = boundary_pos - chunk_buffer;
+                        overlap_size = (bytes_before_boundary < boundary_overlap_buffer_size) ? bytes_before_boundary : boundary_overlap_buffer_size;
+                    } else {
+                        overlap_size = 0;
+                    }
+                }
+                
+                if (overlap_size > 0) {
+                    // Copy end of chunk to overlap buffer
+                    memcpy(boundary_overlap_buffer, chunk_buffer + ret - overlap_size, overlap_size);
+                    boundary_overlap_buffer_fill = overlap_size;
                 } else {
-                    // Only keep the last portion
-                    memcpy(last_chunk_buffer, chunk_buffer + to_write - last_chunk_buffer_size, last_chunk_buffer_size);
-                    last_chunk_size = last_chunk_buffer_size;
+                    boundary_overlap_buffer_fill = 0;
                 }
             }
             
@@ -629,32 +768,41 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
         }
         
         free(chunk_buffer);
-        free(last_chunk_buffer);
+        free(boundary_overlap_buffer);
         
         ESP_LOGI(TAG, "Streamed %d bytes to OTA partition", total_written);
         
         // Validate upload completeness if Content-Length was provided
         if (content_len > 0) {
-            // Account for multipart overhead (boundary + headers, typically ~1KB)
-            size_t expected_firmware_bytes = (content_len > 1024) ? (content_len - 1024) : content_len;
-            // Allow 5% tolerance for multipart overhead variations
-            size_t min_expected = (expected_firmware_bytes * 95) / 100;
+            // Calculate actual multipart overhead from what we received
+            // Actual overhead = Content-Length - firmware_bytes_written
+            size_t actual_overhead = content_len - total_written;
+            ESP_LOGI(TAG, "Multipart overhead: %d bytes (Content-Length: %d, Firmware: %d)", 
+                     actual_overhead, content_len, total_written);
             
-            if (total_written < min_expected) {
-                ESP_LOGE(TAG, "Upload incomplete: received %d bytes, expected at least %d bytes", 
-                         total_written, min_expected);
+            // Validate that overhead is reasonable (should be between 100 bytes and 2KB)
+            // This accounts for: boundary string, headers, boundary markers, line breaks
+            if (actual_overhead < 100 || actual_overhead > 2048) {
+                ESP_LOGE(TAG, "Invalid multipart overhead: %d bytes (expected 100-2048 bytes). Upload may be corrupted.", actual_overhead);
+                esp_ota_abort(ota_handle);
+                return send_json_error(req, "Upload validation failed: invalid multipart overhead", 400);
+            }
+            
+            // Check if firmware is too small (might be incomplete)
+            // Minimum expected: Content-Length minus maximum reasonable overhead (2KB)
+            size_t min_expected = (content_len > 2048) ? (content_len - 2048) : content_len;
+            size_t min_expected_95 = (min_expected * 95) / 100; // Allow 5% tolerance
+            
+            if (total_written < min_expected_95) {
+                ESP_LOGE(TAG, "Upload incomplete: received %d bytes, expected at least %d bytes (Content-Length: %d)", 
+                         total_written, min_expected_95, content_len);
                 esp_ota_abort(ota_handle);
                 return send_json_error(req, "Upload incomplete - connection may have been interrupted", 400);
             }
             
-            // Warn if we wrote significantly more than expected (might have included boundary data)
-            if (total_written > expected_firmware_bytes + 500) {
-                ESP_LOGW(TAG, "Upload validation: received %d bytes, expected ~%d bytes (wrote %d bytes too many - boundary may not have been detected)", 
-                         total_written, expected_firmware_bytes, total_written - expected_firmware_bytes);
-            } else {
-                ESP_LOGI(TAG, "Upload validation: received %d bytes, expected ~%d bytes (within tolerance)", 
-                         total_written, expected_firmware_bytes);
-            }
+            // Success - overhead is reasonable and firmware size is acceptable
+            ESP_LOGI(TAG, "Upload validation passed: firmware=%d bytes, overhead=%d bytes, Content-Length=%d bytes", 
+                     total_written, actual_overhead, content_len);
         }
         
         // Finish OTA update (this will set boot partition and reboot)

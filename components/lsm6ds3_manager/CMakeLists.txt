@@ -4,5 +4,6 @@ idf_component_register(SRCS "lsm6ds3_manager.c"
                     REQUIRES i2c_bus_manager
                             lsm6ds3
                             system_config
-                            opener)
+                            opener
+                            ota_manager)
 

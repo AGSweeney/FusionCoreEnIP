@@ -417,7 +417,14 @@ esp_ota_handle_t ota_manager_start_streaming_update(size_t expected_size)
         return 0;
     }
     
+    // Set status to IN_PROGRESS immediately so sensor tasks can detect it early
+    s_ota_status.status = OTA_STATUS_IN_PROGRESS;
+    s_ota_status.progress = 0;
+    strcpy(s_ota_status.message, "Starting OTA update...");
+    xSemaphoreGive(s_ota_mutex);
+    
     // Get running partition for diagnostics
+    xSemaphoreTake(s_ota_mutex, portMAX_DELAY);
     const esp_partition_t *running_partition = esp_ota_get_running_partition();
     if (running_partition != NULL) {
         ESP_LOGI(TAG, "Running partition: label=%s, type=%d, subtype=%d, address=0x%x, size=%d",
@@ -503,6 +510,10 @@ esp_ota_handle_t ota_manager_start_streaming_update(size_t expected_size)
     esp_err_t err = esp_ota_begin(update_partition, ota_size, &ota_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s (0x%x)", esp_err_to_name(err), err);
+        // Reset status on failure
+        s_ota_status.status = OTA_STATUS_ERROR;
+        snprintf(s_ota_status.message, sizeof(s_ota_status.message), "OTA begin failed: %s", esp_err_to_name(err));
+        s_ota_status.progress = 0;
         xSemaphoreGive(s_ota_mutex);
         return 0;
     }
@@ -516,8 +527,7 @@ esp_ota_handle_t ota_manager_start_streaming_update(size_t expected_size)
     s_streaming_total_bytes = 0;
     s_streaming_expected_size = ota_size; // Use partition size as expected size if not provided
     
-    // Update status
-    s_ota_status.status = OTA_STATUS_IN_PROGRESS;
+    // Update status message (status already set to IN_PROGRESS earlier)
     s_ota_status.progress = 0;
     strcpy(s_ota_status.message, "Uploading firmware...");
     xSemaphoreGive(s_ota_mutex);

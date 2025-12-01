@@ -421,7 +421,7 @@ Get NAU7802 weight scale status, configuration, and current reading.
 - `weight`: Current weight reading (in configured unit)
 - `unit`: Unit of measurement ("g", "lbs", or "kg")
 - `raw_reading`: Raw 24-bit ADC reading
-- `byte_offset`: Assembly byte offset (24)
+- `byte_offset`: Assembly byte offset (read-only, statically mapped to 24)
 - `gain`: PGA gain setting (0=x1, 1=x2, ..., 7=x128)
 - `sample_rate`: Sample rate setting (0=10 SPS, 1=20, 2=40, 3=80, 4=320)
 - `channel`: Active channel (0=Channel 1, 1=Channel 2)
@@ -442,7 +442,6 @@ Update NAU7802 configuration. Most settings require reboot to take effect.
 ```json
 {
   "enabled": true,
-  "byte_offset": 24,
   "unit": 1,
   "average": 5,
   "gain": 7,
@@ -454,7 +453,6 @@ Update NAU7802 configuration. Most settings require reboot to take effect.
 
 **Fields**:
 - `enabled` (boolean): Enable/disable device
-- `byte_offset` (integer): Assembly byte offset (default: 24)
 - `unit` (integer): Unit code (0=grams, 1=pounds, 2=kilograms)
 - `average` (integer): Sample averaging count (1-50, immediate effect)
 - `gain` (integer): PGA gain (0-7, requires reboot)
@@ -550,21 +548,22 @@ Get VL53L1X distance sensor status and current reading.
 - `ambient`: Ambient light rate (kcps)
 - `sig_per_spad`: Signal rate per SPAD (kcps/SPAD)
 - `num_spads`: Number of enabled SPADs
-- `byte_offset`: Assembly byte offset (0)
+- `byte_offset`: Assembly byte offset (read-only, statically mapped to 0)
 
 ---
 
 ### POST `/api/vl53l1x`
 
-Update VL53L1X enabled state and assembly byte offset.
+Update VL53L1X enabled state.
 
 **Request Body**:
 ```json
 {
-  "enabled": true,
-  "byte_offset": 0
+  "enabled": true
 }
 ```
+
+**Note**: Assembly byte offset is statically mapped (0) and cannot be configured.
 
 **Response** (200 OK):
 ```json
@@ -705,21 +704,22 @@ Get LSM6DS3 IMU sensor status and current orientation.
 - `roll`: Roll angle in degrees (-180.00 to +180.00)
 - `pitch`: Pitch angle in degrees (-180.00 to +180.00)
 - `ground_angle`: Ground angle in degrees
-- `byte_offset`: Assembly byte offset (16)
+- `byte_offset`: Assembly byte offset (read-only, statically mapped to 16)
 
 ---
 
 ### POST `/api/lsm6ds3`
 
-Update LSM6DS3 enabled state and assembly byte offset.
+Update LSM6DS3 enabled state.
 
 **Request Body**:
 ```json
 {
-  "enabled": true,
-  "byte_offset": 16
+  "enabled": true
 }
 ```
+
+**Note**: Assembly byte offset is statically mapped (16) and cannot be configured.
 
 **Response** (200 OK):
 ```json

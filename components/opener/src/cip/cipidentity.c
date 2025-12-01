@@ -55,6 +55,9 @@ CipIdentityObject g_identity = { .vendor_id = OPENER_DEVICE_VENDOR_ID, /* Attrib
                                  .state = kStateSelfTesting /* Attribute 8: State */
                                  };
 
+/* Static variable to store original state value during GetAttributeAll */
+static CipUsint s_saved_state = 0;
+
 /* The Doxygen comment is with the function's prototype in opener_api.h. */
 void SetDeviceRevision(EipUint8 major, EipUint8 minor) {
   g_identity.revision.major_revision = major;
@@ -115,7 +118,14 @@ static inline void MergeStatusAndExtStatus(void) {
      (status_flags & (kMajorRecoverableFault | kMajorUnrecoverableFault) ) ) {
     ext_status = kMajorFault;
   }
-  g_identity.status = status_flags | ext_status;
+  
+  /* Combine status flags and extended status, then mask out reserved bits
+   * to ensure compliance with CIP spec Table 5-2.3:
+   * - Bit 1: Reserved (shall be 0)
+   * - Bit 3: Reserved (shall be 0)
+   * - Bits 12-15: Reserved (shall be 0)
+   */
+  g_identity.status = (status_flags | ext_status) & kStatusValidBitsMask;
 }
 
 /** @brief Set status flags of the device's Status word
@@ -205,6 +215,56 @@ EipStatus IdentityObjectPreResetCallback(
   return eip_status;
   }
 
+/** @brief PreGetCallback for Identity Object
+ *
+ *  Implements CIP specification requirement that Attribute 8 (State)
+ *  returns value 255 (Default) when accessed via GetAttributeAll service,
+ *  instead of the actual state value.
+ *
+ *  @param instance  CIP instance (unused)
+ *  @param attribute CIP attribute being accessed
+ *  @param service   Service code (kGetAttributeAll = 0x01 or kGetAttributeSingle = 0x0E)
+ *  @return kEipStatusOk
+ */
+static EipStatus IdentityPreGetCallback(CipInstance *const instance,
+                                        CipAttributeStruct *const attribute,
+                                        CipByte service) {
+  (void)instance;
+
+  /* Only handle Attribute 8 (State) for GetAttributeAll service */
+  if (attribute->attribute_number == 8 && service == kGetAttributeAll) {
+    /* Save the actual state value */
+    s_saved_state = g_identity.state;
+    /* Temporarily set to 255 (Default) as per CIP spec */
+    g_identity.state = kStateDefault;
+  }
+
+  return kEipStatusOk;
+}
+
+/** @brief PostGetCallback for Identity Object
+ *
+ *  Restores the original state value after GetAttributeAll encoding.
+ *
+ *  @param instance  CIP instance (unused)
+ *  @param attribute CIP attribute that was accessed
+ *  @param service   Service code (unused)
+ *  @return kEipStatusOk
+ */
+static EipStatus IdentityPostGetCallback(CipInstance *const instance,
+                                         CipAttributeStruct *const attribute,
+                                         CipByte service) {
+  (void)instance;
+  (void)service;
+
+  /* Restore original state value if we modified it */
+  if (attribute->attribute_number == 8 && service == kGetAttributeAll) {
+    g_identity.state = s_saved_state;
+  }
+
+  return kEipStatusOk;
+}
+
 void InitializeCipIdentity(CipClass *class) {
 
   CipClass *meta_class = class->class_instance.cip_class;
@@ -237,6 +297,8 @@ void InitializeCipIdentity(CipClass *class) {
 
   // add Callback function pointers
   class->PreResetCallback = &IdentityObjectPreResetCallback;
+  class->PreGetCallback = &IdentityPreGetCallback;
+  class->PostGetCallback = &IdentityPostGetCallback;
 
 }
 
@@ -283,7 +345,7 @@ EipStatus CipIdentityInit() {
   InsertAttribute(instance, 7, kCipShortString, EncodeCipShortString,
                   NULL, &g_identity.product_name, kGetableSingleAndAll);
   InsertAttribute(instance, 8, kCipUsint, EncodeCipUsint,
-                  NULL, &g_identity.state, kGetableSingleAndAll);
+                  NULL, &g_identity.state, kGetableSingleAndAll | kPreGetFunc | kPostGetFunc);
 
   InsertService(class,
                 kGetAttributeSingle,

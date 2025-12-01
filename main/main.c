@@ -124,6 +124,7 @@
 #include "opener.h"
 #include "nvtcpip.h"
 #include "ciptcpipinterface.h"
+#include "nvdata.h"
 #include "sdkconfig.h"
 #include "esp_netif_net_stack.h"
 #include "webui.h"
@@ -162,6 +163,7 @@ static struct netif *s_netif = NULL;
 static SemaphoreHandle_t s_netif_mutex = NULL;
 static bool s_services_initialized = false;
 static esp_eth_mac_t *s_eth_mac = NULL;  // MAC pointer for media counter access
+esp_eth_handle_t s_eth_handle = NULL;  // Ethernet handle for PHY control (extern accessible)
 
 
 
@@ -311,6 +313,13 @@ static void ethernet_event_handler(void *arg, esp_event_base_t event_base,
     switch (event_id) {
     case ETHERNET_EVENT_CONNECTED:
         esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
+        
+        /* MODIFICATION: Update Ethernet Link Object with actual link status
+         * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+         * Reads actual speed/duplex from PHY and updates Interface Speed and Flags
+         */
+        extern void CipEthernetLinkUpdateLinkStatus(void *eth_handle);
+        CipEthernetLinkUpdateLinkStatus((void *)eth_handle);
         ESP_LOGI(TAG, "Ethernet Link Up");
         ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
                mac_addr[0], mac_addr[1], mac_addr[2],
@@ -480,6 +489,9 @@ void app_main(void)
     // Note: ACD setting (select_acd) is now respected from NV storage.
     // Users can disable ACD via attribute 10, and it will persist across reboots.
     // Previously, this code would auto-enable ACD for static IP, overriding user preference.
+    
+    /* Load QoS DSCP values from NVS (with fallback to defaults) */
+    (void)NvdataLoad();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -556,15 +568,15 @@ void app_main(void)
     s_eth_mac = mac;
 
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
-    esp_eth_handle_t eth_handle = NULL;
-    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &eth_handle));
+    s_eth_handle = NULL;
+    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &s_eth_handle));
 
-    esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(eth_handle);
+    esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);
     ESP_ERROR_CHECK(esp_netif_attach(eth_netif, glue));
 
     configure_netif_from_tcpip(eth_netif);
     
-    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+    ESP_ERROR_CHECK(esp_eth_start(s_eth_handle));
     
     ESP_LOGI(TAG, "Initializing I2C Bus Manager...");
     esp_err_t i2c_err = i2c_bus_manager_init();

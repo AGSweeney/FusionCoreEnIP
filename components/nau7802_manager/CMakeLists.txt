@@ -4,5 +4,6 @@ idf_component_register(SRCS "nau7802_manager.c"
                     REQUIRES i2c_bus_manager
                             nau7802
                             system_config
-                            opener)
+                            opener
+                            ota_manager)
 

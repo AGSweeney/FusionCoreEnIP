@@ -94,6 +94,7 @@ CipTcpIpObject g_tcpip =
     0   /* the multicast address will be allocated on IP address configuration */
   },
   .select_acd = false,
+  .quick_connect = false,  /* attribute #12: EtherNet/IP Quick_Connect (default: disabled) */
   .encapsulation_inactivity_timeout = 120 /* attribute #13 encapsulation_inactivity_timeout, use a default value of 120 */
 };
 
@@ -395,6 +396,22 @@ uint8_t CipTcpIpIsAcdEnabled(void) {
   return g_tcpip.select_acd ? 1 : 0;
 }
 
+/* MODIFICATION: Get ACD timeout value from Parameter Object Instance #21
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ * Returns the ACD timeout in seconds, falling back to 10 seconds (RFC 5227 DEFEND_INTERVAL)
+ * if the value is not set or invalid
+ */
+uint16_t CipTcpIpGetAcdTimeout(void) {
+  /* Get timeout from Parameter Object Instance #21 (ACD Timeout) */
+  #if defined(CIP_PARAMETER_OBJECT) && 0 != CIP_PARAMETER_OBJECT
+    extern uint16_t CipParameterGetAcdTimeout(void);
+    return CipParameterGetAcdTimeout();
+  #else
+    /* Parameter Object not available, return default */
+    return 10;
+  #endif
+}
+
 /************** Functions ****************************************/
 
 void EncodeCipTcpIpInterfaceConfiguration(const void *const data,
@@ -675,6 +692,28 @@ static int DecodeTcpIpSelectAcd(void *const data,
   return 1;
 }
 
+static int DecodeCipTcpIpQuickConnect( /* Attribute 12 */
+		void *const data,
+		CipMessageRouterRequest *const message_router_request,
+		CipMessageRouterResponse *const message_router_response) {
+  if (message_router_request->request_data_size < 1) {
+    message_router_response->general_status = kCipErrorNotEnoughData;
+    return -1;
+  }
+
+  CipUsint selection = GetUsintFromMessage(&(message_router_request->data));
+  if (selection > 1) {
+    message_router_response->general_status = kCipErrorInvalidAttributeValue;
+    return -1;
+  }
+
+  *(CipBool *)data = (CipBool)selection;
+  message_router_response->general_status = kCipErrorSuccess;
+  (void)NvTcpipStore(&g_tcpip);
+
+  return 1;
+}
+
 int DecodeCipTcpIpInterfaceEncapsulationInactivityTimeout( /* Attribute 13 */
 		void *const data,
 		CipMessageRouterRequest *const message_router_request,
@@ -710,7 +749,7 @@ EipStatus CipTcpIpInterfaceInit() {
                                        2, /* # class services */
                                        13, /* # instance attributes */
                                        13, /* # highest instance attribute number */
-                                       3, /* # instance services */
+                                       4, /* # instance services (GetAttributeSingle, GetAttributeAll, SetAttributeSingle, SetAttributeAll) */
                                        1, /* # instances */
                                        "TCP/IP interface", 4, /* # class revision */
                                        NULL /* # function pointer for initialization */
@@ -827,8 +866,9 @@ EipStatus CipTcpIpInterfaceInit() {
                   12,
                   kCipBool,
                   EncodeCipBool,
-                  NULL,
-                  &dummy_data_field, kGetableAllDummy);
+                  NULL,  /* Read-only attribute - no decode function */
+                  &g_tcpip.quick_connect,
+                  kGetableSingleAndAll);  /* Getable but not settable */
   InsertAttribute(instance,
                   13,
                   kCipUint,
@@ -847,6 +887,9 @@ EipStatus CipTcpIpInterfaceInit() {
   InsertService(tcp_ip_class, kSetAttributeSingle,
                 &SetAttributeSingle,
                 "SetAttributeSingle");
+
+  InsertService(tcp_ip_class, kSetAttributeAll, &SetAttributeAll,
+                "SetAttributeAll");
 
   return kEipStatusOk;
 }

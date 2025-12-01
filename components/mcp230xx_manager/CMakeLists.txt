@@ -5,5 +5,6 @@ idf_component_register(SRCS "mcp230xx_manager.c"
                             mcp23008
                             mcp23017
                             system_config
-                            opener)
+                            opener
+                            ota_manager)
 

@@ -198,6 +198,30 @@ void CipEthernetLinkSetInterfaceState(CipInstanceNum instance,
  */
 void CipEthernetLinkSetMac(EipUint8 *p_physical_address);
 
+#if defined(OPENER_ETHLINK_IFACE_CTRL_ENABLE) && 0 != OPENER_ETHLINK_IFACE_CTRL_ENABLE
+/** @brief Update Ethernet Link Object with actual PHY link status
+ *
+ *  @param  eth_handle ESP-IDF Ethernet driver handle
+ *
+ * This function reads the actual speed and duplex from the PHY and updates
+ * Interface Speed (Attribute #1) and Interface Flags (Attribute #2).
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ */
+void CipEthernetLinkUpdateLinkStatus(void *eth_handle);
+
+/** @brief Apply Interface Control settings to ESP Ethernet PHY
+ *
+ *  @param  instance_number Ethernet Link instance number (typically 1)
+ *  @param  interface_control Pointer to Interface Control structure
+ *
+ * This function applies speed/duplex settings from Interface Control (Attribute #6)
+ * to the ESP Ethernet PHY. Stops the driver, configures PHY, then restarts.
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ */
+EipStatus CipEthernetLinkApplyInterfaceControl(CipInstanceNum instance_number,
+                                                const CipEthernetLinkInterfaceControl *interface_control);
+#endif
+
 
 /* global object instance(s) */
 

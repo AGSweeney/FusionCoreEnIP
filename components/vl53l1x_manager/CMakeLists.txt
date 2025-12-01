@@ -5,5 +5,6 @@ idf_component_register(SRCS "vl53l1x_manager.c"
                             vl53l1x_uld
                             vl53l1x_config
                             system_config
-                            opener)
+                            opener
+                            ota_manager)
 

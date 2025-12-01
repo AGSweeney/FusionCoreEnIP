@@ -1,6 +1,7 @@
 EZ-EDS Version 3.38.20251024 Generated Log File
-11-29-2025, 16:07:44
+11-30-2025, 20:32:15
 
 Verification of the EDS file results in the following errors and warnings:
 
 
+Warning: [Parameter Class] - Unknown Section Keyword. Vendor Specific Section shall be named ClassN_VendorM, see details in Vol1 7-3.6.1.2

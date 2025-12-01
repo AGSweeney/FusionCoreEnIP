@@ -47,8 +47,31 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 - **Explicit Messaging**: Support for explicit (request/response) messaging
 - **Implicit I/O Messaging**: Cyclic data exchange via Input/Output assemblies
 - **Connection Management**: Multiple simultaneous connections (Exclusive Owner, Input Only, Listen Only)
+  - Up to 1 Exclusive Owner connection
+  - Up to 1 Input Only connection (with 3 connection paths)
+  - Up to 1 Listen Only connection (with 3 connection paths)
+  - Up to 6 explicit connections
+  - Maximum 20 simultaneous sessions
 - **Configurable RPI**: Requested Packet Interval configuration per connection type
 - **Port**: Standard EtherNet/IP port 0xAF12 (44818)
+
+### Implemented CIP Objects
+
+The device implements the following CIP objects:
+
+- **Identity Object (Class 0x01)**: Device identification and status
+- **Message Router Object (Class 0x02)**: CIP message routing and object discovery
+- **DeviceNet Object (Class 0x03)**: DeviceNet protocol support
+- **Assembly Object (Class 0x04)**: Input Assembly 100 and Output Assembly 150
+- **Connection Manager Object (Class 0x06)**: Connection establishment and management
+- **TCP/IP Interface Object (Class 0xF5)**: Network configuration with ACD support
+- **Ethernet Link Object (Class 0xF6)**: Ethernet interface status and statistics
+- **QoS Object (Class 0x48)**: Quality of Service configuration
+- **File Object (Class 0x37)**: EDS file and icon serving
+- **Parameter Object (Class 0x0F)**: Device configuration parameters
+- **Port Object (Class 0xF4)**: Communication port information
+- **LLDP Management Object (Class 0x109)**: LLDP configuration and control
+- **LLDP Data Table Object (Class 0x10A)**: LLDP neighbor information
 
 ### EDS File Support
 
@@ -79,6 +102,29 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 - **ODVA Compliance**: Implementation in progress to achieve ODVA EtherNet/IP compliance for network discovery and topology information
 - See [LLDP Component Documentation](components/lldp/README.md) for implementation details
 
+### CIP Parameter Object (Class 0x0F)
+
+- **Standard CIP Parameter Object**: Provides standardized access to device configuration parameters via EtherNet/IP
+- **54 Parameter Instances**: Comprehensive device configuration and monitoring
+  - Network configuration parameters (IP address, subnet, gateway, DNS, DHCP, hostname, domain, multicast TTL, ACD settings)
+  - NAU7802 scale configuration (enabled, unit, gain, sample rate, channel, LDO, averaging)
+  - VL53L1X sensor configuration (enabled, distance mode, timing budget, ROI settings, thresholds, calibration)
+  - Connection parameters (default RPI, max connections, assembly sizes)
+- **Services**: GetAttributeSingle, GetAttributeAll, SetAttributeSingle (for writable parameters)
+- **NVS Persistence**: Automatic persistence of configuration changes to Non-Volatile Storage
+- **Parameter Metadata**: Each parameter includes name, units, help string, min/max values, default values, and data type codes
+- See [Parameter Object Map Documentation](docs/PARAMETER_OBJECT_MAP.md) for complete parameter reference
+
+### CIP Port Object (Class 0xF4)
+
+- **Port Object**: Represents physical communication interface (port) on EtherNet/IP device
+- **Port Information**: Provides port-level information and diagnostics
+  - Port type (TCP/IP)
+  - Port number
+  - Link path to associated TCP/IP Interface Object
+  - Port name and type name
+- **Services**: GetAttributeSingle, GetAttributeAll
+
 ### Enhanced CIP Objects
 
 - **TCP/IP Interface Object**: Enhanced with ACD control (Attribute #10) and conflict reporting (Attribute #11)
@@ -105,7 +151,6 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 - Configurable accelerometer and gyroscope settings
 - Zero offset support: Adjustable roll/pitch/yaw zero points
 - Update rate: ~10 Hz (sensor samples at 104 Hz internally)
-- See [LSM6DS3 Angle Calculation Documentation](docs/LSM6DS3_ANGLE_CALCULATION.md) for detailed implementation
 
 ### NAU7802 24-Bit Weight Scale ADC
 
@@ -571,10 +616,9 @@ Key configuration options available via `idf.py menuconfig`:
 - [API Endpoints](docs/API_Endpoints.md) - Complete REST API reference with examples
 - [ACD Conflict Reporting](docs/ACD_CONFLICT_REPORTING.md) - Address Conflict Detection implementation and EtherNet/IP integration
 - [Assembly Data Layout](docs/ASSEMBLY_DATA_LAYOUT.md) - Complete byte-by-byte assembly layout
-- [LSM6DS3 Angle Calculation](docs/LSM6DS3_ANGLE_CALCULATION.md) - IMU sensor fusion algorithm details
+- [Parameter Object Map](docs/PARAMETER_OBJECT_MAP.md) - Complete reference for CIP Parameter Object instances and attributes
 - [File Object Integration](docs/FILE_OBJECT_INTEGRATION.md) - CIP File Object implementation for EDS file serving
 - [LWIP Modifications](docs/LWIP_MODIFICATIONS.md) - LWIP stack optimizations and RFC 5227 ACD implementation
-- [NAU7802 API Enhancements](docs/NAU7802_API_ENHANCEMENTS.md) - Weight scale API features and configuration
 
 ### Component READMEs
 

@@ -54,6 +54,12 @@
 #include "opener_user_conf.h"
 #include "endianconv.h"
 
+/* ESP-IDF Ethernet includes for PHY control (needed for link status updates) */
+#ifdef ESP_PLATFORM
+#include "esp_eth.h"
+#include "esp_log.h"
+#endif
+
 #if OPENER_ETHLINK_INSTANCE_CNT > 1
 /* If we have more than 1 Ethernet Link instance then the interface label
  * attribute is mandatory. We need then OPENER_ETHLINK_LABEL_ENABLE. */
@@ -115,16 +121,25 @@ static EipStatus GetAndClearEthernetLink(
 
 /** @brief Modify the attribute values for Attribute6: Interface Control
  *
- * @param CipEthernetLinkInterfaceControl pointer to attribute data.
+ * @param data pointer to attribute data (void * for compatibility with CipAttributeDecodeFromMessage).
  * @param message_router_request pointer to request.
  * @param message_router_response pointer to response.
  * @return length of taken bytes
  *          -1 .. error
  */
 int DecodeCipEthernetLinkInterfaceControl(
-		CipEthernetLinkInterfaceControl *const data,
-		const CipMessageRouterRequest *const message_router_request,
+		void *const data,
+		CipMessageRouterRequest *const message_router_request,
 		CipMessageRouterResponse *const message_router_response);
+
+/** @brief PostSet callback for Ethernet Link Object
+ * 
+ * Called after SetAttributeSingle to apply Interface Control settings to PHY
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ */
+static EipStatus EthernetLinkPostSetCallback(CipInstance *const instance,
+                                             CipAttributeStruct *const attribute,
+                                             CipByte service);
 #endif
 
 
@@ -283,7 +298,7 @@ EipStatus CipEthernetLinkInit(void) {
                                                  11,
                                                  /* # highest instance attribute number*/
                                                  /* # instance services follow */
-                                                 2 + OPENER_ETHLINK_CNTRS_ENABLE + OPENER_ETHLINK_IFACE_CTRL_ENABLE,
+                                                 2 + OPENER_ETHLINK_CNTRS_ENABLE + (2 * OPENER_ETHLINK_IFACE_CTRL_ENABLE), /* Base 2 + GetAndClear (if enabled) + SetAttributeSingle/SetAttributeAll (if Interface Control enabled) */
                                                  OPENER_ETHLINK_INSTANCE_CNT,
                                                  /* # instances*/
                                                  "Ethernet Link",
@@ -336,6 +351,10 @@ EipStatus CipEthernetLinkInit(void) {
     InsertService(ethernet_link_class, kSetAttributeSingle,
     				&SetAttributeSingle,
                       "SetAttributeSingle");
+    InsertService(ethernet_link_class, kSetAttributeAll, &SetAttributeAll,
+                  "SetAttributeAll");
+    /* Set PostSetCallback to apply Interface Control settings to PHY */
+    ethernet_link_class->PostSetCallback = EthernetLinkPostSetCallback;
 #endif
 
     /* bind attributes to the instance */
@@ -399,21 +418,27 @@ EipStatus CipEthernetLinkInit(void) {
       0 != OPENER_ETHLINK_IFACE_CTRL_ENABLE
       if (2 == idx) {
         /* Interface control of internal switch port is never settable. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
         InsertAttribute(ethernet_link_instance,
                         6,
                         kCipAny,
                         EncodeCipEthernetLinkInterfaceControl,
-                        DecodeCipEthernetLinkInterfaceControl,
+                        (CipAttributeDecodeFromMessage)DecodeCipEthernetLinkInterfaceControl,
                         &g_ethernet_link[idx].interface_control,
                         IFACE_CTRL_ACCESS_MODE & ~kSetable);
+#pragma GCC diagnostic pop
       } else {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
         InsertAttribute(ethernet_link_instance,
                         6,
                         kCipAny,
                         EncodeCipEthernetLinkInterfaceControl,
-                        DecodeCipEthernetLinkInterfaceControl,
+                        (CipAttributeDecodeFromMessage)DecodeCipEthernetLinkInterfaceControl,
                         &g_ethernet_link[idx].interface_control,
-                        IFACE_CTRL_ACCESS_MODE);
+                        IFACE_CTRL_ACCESS_MODE | kPostSetFunc);
+#pragma GCC diagnostic pop
       }
 #else
       InsertAttribute(ethernet_link_instance,
@@ -624,9 +649,13 @@ static bool IsIfaceControlAllowed(CipInstanceNum instance_id,
 }
 
 int DecodeCipEthernetLinkInterfaceControl(
-		CipEthernetLinkInterfaceControl *const data,
+		void *const data,
 		CipMessageRouterRequest *const message_router_request,
 		CipMessageRouterResponse *const message_router_response) {
+
+	/* Cast void * to the actual data type */
+	CipEthernetLinkInterfaceControl *const interface_control = 
+		(CipEthernetLinkInterfaceControl *)data;
 
 	CipInstance *const instance = GetCipInstance(
 				GetCipClass(message_router_request->request_path.class_id),
@@ -663,7 +692,7 @@ int DecodeCipEthernetLinkInterfaceControl(
 					return number_of_decoded_bytes;
 				}
 			}
-			*data = if_cntrl; //write data to attribute
+			*interface_control = if_cntrl; //write data to attribute
 			message_router_response->general_status = kCipErrorSuccess;
 			number_of_decoded_bytes = 4;
 		}
@@ -671,4 +700,181 @@ int DecodeCipEthernetLinkInterfaceControl(
 	return number_of_decoded_bytes;
 }
 
- #endif
+/* MODIFICATION: PostSet callback for Ethernet Link Object
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ * Applies Interface Control (Attribute #6) settings to ESP Ethernet PHY
+ */
+static EipStatus EthernetLinkPostSetCallback(CipInstance *const instance,
+                                             CipAttributeStruct *const attribute,
+                                             CipByte service) {
+  (void)service;
+  
+  /* Only process Interface Control (Attribute #6) */
+  if (attribute->attribute_number != 6) {
+    return kEipStatusOk;
+  }
+  
+  /* Apply Interface Control settings to PHY */
+  CipEthernetLinkInterfaceControl *iface_ctrl = 
+    (CipEthernetLinkInterfaceControl *)attribute->data;
+  
+  if (iface_ctrl != NULL) {
+    EipStatus status = CipEthernetLinkApplyInterfaceControl(
+      instance->instance_number, iface_ctrl);
+    if (status != kEipStatusOk) {
+      OPENER_TRACE_ERR("Failed to apply Interface Control settings to PHY\n");
+      return status;
+    }
+  }
+  
+  return kEipStatusOk;
+}
+
+/* MODIFICATION: Apply Interface Control settings to ESP Ethernet PHY
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ */
+EipStatus CipEthernetLinkApplyInterfaceControl(CipInstanceNum instance_number,
+                                                const CipEthernetLinkInterfaceControl *interface_control) {
+#ifdef ESP_PLATFORM
+  /* Get ESP Ethernet handle from main.c */
+  extern esp_eth_handle_t s_eth_handle;
+  
+  if (s_eth_handle == NULL) {
+    OPENER_TRACE_ERR("Ethernet handle not available\n");
+    return kEipStatusError;
+  }
+  
+  /* Only apply to instance 1 (physical Ethernet port) */
+  if (instance_number != 1) {
+    OPENER_TRACE_INFO("Interface Control only applies to instance 1\n");
+    return kEipStatusOk;
+  }
+  
+  esp_err_t ret;
+  
+  /* Stop Ethernet driver before changing PHY settings */
+  ret = esp_eth_stop(s_eth_handle);
+  if (ret != ESP_OK) {
+    OPENER_TRACE_ERR("Failed to stop Ethernet driver: %s\n", esp_err_to_name(ret));
+    return kEipStatusError;
+  }
+  
+  /* Configure autonegotiation */
+  bool autonego_en = (interface_control->control_bits & kEthLinkIfCntrlAutonegotiate) != 0;
+  ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_S_AUTONEGO, &autonego_en);
+  if (ret != ESP_OK) {
+    OPENER_TRACE_ERR("Failed to set autonegotiation: %s\n", esp_err_to_name(ret));
+    esp_eth_start(s_eth_handle); /* Try to restart anyway */
+    return kEipStatusError;
+  }
+  
+  if (!autonego_en) {
+    /* Autonegotiation disabled - apply forced settings */
+    
+    /* Set speed */
+    if (interface_control->forced_interface_speed > 0) {
+      eth_speed_t speed;
+      if (interface_control->forced_interface_speed == 10) {
+        speed = ETH_SPEED_10M;
+      } else if (interface_control->forced_interface_speed == 100) {
+        speed = ETH_SPEED_100M;
+      } else {
+        OPENER_TRACE_ERR("Unsupported speed: %u Mbps (only 10 or 100 supported)\n",
+                        interface_control->forced_interface_speed);
+        esp_eth_start(s_eth_handle); /* Try to restart anyway */
+        return kEipStatusError;
+      }
+      
+      ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_S_SPEED, &speed);
+      if (ret != ESP_OK) {
+        OPENER_TRACE_ERR("Failed to set speed: %s\n", esp_err_to_name(ret));
+        esp_eth_start(s_eth_handle); /* Try to restart anyway */
+        return kEipStatusError;
+      }
+      OPENER_TRACE_INFO("Ethernet speed set to %u Mbps\n", interface_control->forced_interface_speed);
+    }
+    
+    /* Set duplex mode */
+    eth_duplex_t duplex = (interface_control->control_bits & kEthLinkIfCntrlForceDuplexFD) ?
+                          ETH_DUPLEX_FULL : ETH_DUPLEX_HALF;
+    ret = esp_eth_ioctl(s_eth_handle, ETH_CMD_S_DUPLEX_MODE, &duplex);
+    if (ret != ESP_OK) {
+      OPENER_TRACE_ERR("Failed to set duplex: %s\n", esp_err_to_name(ret));
+      esp_eth_start(s_eth_handle); /* Try to restart anyway */
+      return kEipStatusError;
+    }
+    OPENER_TRACE_INFO("Ethernet duplex set to %s\n", 
+                     (duplex == ETH_DUPLEX_FULL) ? "Full" : "Half");
+  } else {
+    OPENER_TRACE_INFO("Ethernet autonegotiation enabled\n");
+  }
+  
+  /* Restart Ethernet driver */
+  ret = esp_eth_start(s_eth_handle);
+  if (ret != ESP_OK) {
+    OPENER_TRACE_ERR("Failed to restart Ethernet driver: %s\n", esp_err_to_name(ret));
+    return kEipStatusError;
+  }
+  
+  OPENER_TRACE_INFO("Interface Control settings applied successfully\n");
+  return kEipStatusOk;
+#else
+  (void)instance_number;
+  (void)interface_control;
+  OPENER_TRACE_WARN("ESP platform not available - Interface Control not applied\n");
+  return kEipStatusError;
+#endif
+}
+
+#endif
+
+/* MODIFICATION: Update Ethernet Link Object with actual PHY link status
+ * Added by: Adam G. Sweeney <agsweeney@gmail.com>
+ * This function is always available (not conditional on OPENER_ETHLINK_IFACE_CTRL_ENABLE)
+ * because we want to update link status regardless of Interface Control feature.
+ */
+void CipEthernetLinkUpdateLinkStatus(void *eth_handle) {
+#ifdef ESP_PLATFORM
+  if (eth_handle == NULL) {
+    return;
+  }
+  
+  esp_eth_handle_t handle = (esp_eth_handle_t)eth_handle;
+  esp_err_t ret;
+  
+  /* Read actual speed from PHY */
+  eth_speed_t speed;
+  ret = esp_eth_ioctl(handle, ETH_CMD_G_SPEED, &speed);
+  if (ret == ESP_OK) {
+    CipUint actual_speed = (speed == ETH_SPEED_100M) ? 100 : 10;
+    if (g_ethernet_link[0].interface_speed != actual_speed) {
+      g_ethernet_link[0].interface_speed = actual_speed;
+      OPENER_TRACE_INFO("Ethernet link speed: %u Mbps\n", actual_speed);
+    }
+  }
+  
+  /* Read actual duplex from PHY */
+  eth_duplex_t duplex;
+  ret = esp_eth_ioctl(handle, ETH_CMD_G_DUPLEX_MODE, &duplex);
+  if (ret == ESP_OK) {
+    /* Update Interface Flags (Attribute #2):
+     * Bit 0: Link Active (assume active if we got here)
+     * Bit 1: Half Duplex (0=Full, 1=Half)
+     * Bit 2: Negotiation Complete
+     * Bit 3: Full Duplex
+     */
+    CipDword flags = 0x0D; /* Link active, negotiation complete, full duplex (default) */
+    if (duplex == ETH_DUPLEX_HALF) {
+      flags = 0x0B; /* Link active, negotiation complete, half duplex */
+    }
+    
+    if (g_ethernet_link[0].interface_flags != flags) {
+      g_ethernet_link[0].interface_flags = flags;
+      OPENER_TRACE_INFO("Ethernet link duplex: %s\n",
+                       (duplex == ETH_DUPLEX_FULL) ? "Full" : "Half");
+    }
+  }
+#else
+  (void)eth_handle;
+#endif
+}
