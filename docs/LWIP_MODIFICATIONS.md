@@ -210,7 +210,7 @@ This document provides a comprehensive record of all modifications made to the L
 | `CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0` | n (default) | **y** | Pin LWIP TCP/IP task to Core 0 |
 | `CONFIG_LWIP_TCPIP_TASK_AFFINITY` | 0x7FFFFFFF (no affinity) | **0x0** | Explicit Core 0 affinity |
 
-**Rationale**: Pins LWIP TCP/IP task to Core 0, leaving Core 1 available for other hardware interfaces and OpENer processing.
+**Rationale**: Pins LWIP TCP/IP task to Core 0, centralizing network processing for predictable performance. I/O tasks are unpinned and distributed across both cores by the scheduler.
 
 ### IRAM Optimization
 
@@ -317,7 +317,8 @@ Timing values are configured via ESP-IDF Kconfig options (accessible via `idf.py
 **Rationale**: 
 - Centralizes network processing on one core
 - Reduces inter-core communication overhead
-- Leaves Core 1 available for other tasks
+- Provides predictable, low-latency network performance
+- I/O tasks (sensor managers) are unpinned and distributed across both cores by the scheduler
 
 ### OpENer Task
 

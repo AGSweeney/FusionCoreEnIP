@@ -72,6 +72,12 @@ static void mcp230xx_update_task(void *pvParameters)
                 continue;
             }
             
+            // Static arrays to track last written values
+            static uint16_t last_mcp23017_values[MCP_MAX_DEVICES] = {0};
+            static uint8_t last_mcp23008_values[MCP_MAX_DEVICES] = {0};
+            static uint32_t last_readback_time[MCP_MAX_DEVICES] = {0};
+            const uint32_t READBACK_INTERVAL_MS = 100; // Read GPIO state every 100ms for feedback
+            
             for (int i = 0; i < s_device_count; i++) {
                 if (!s_devices[i].initialized) {
                     continue;
@@ -84,11 +90,24 @@ static void mcp230xx_update_task(void *pvParameters)
                 uint8_t output_byte_offset = (s_devices[i].i2c_address - 0x20) * 2;
                 uint8_t input_byte_offset = 40 + output_byte_offset;
                 bool operation_success = false;
+                uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                bool needs_readback = (current_time - last_readback_time[i]) >= READBACK_INTERVAL_MS;
 
                 if (s_devices[i].device_type == 0) {
                     uint16_t gpio_value = ((uint16_t)local_output_assembly[output_byte_offset + 1] << 8) | local_output_assembly[output_byte_offset];
                     
-                    if (mcp23017_write_gpio(&s_devices[i].device.mcp23017_dev, gpio_value) == ESP_OK) {
+                    // Only write if value changed
+                    if (gpio_value != last_mcp23017_values[i]) {
+                        if (mcp23017_write_gpio(&s_devices[i].device.mcp23017_dev, gpio_value) == ESP_OK) {
+                            last_mcp23017_values[i] = gpio_value;
+                            operation_success = true;
+                        }
+                    } else {
+                        operation_success = true; // No write needed, but operation is "successful"
+                    }
+                    
+                    // Read back GPIO state periodically for feedback (even if we didn't write)
+                    if (needs_readback && operation_success) {
                         uint16_t readback = 0;
                         if (mcp23017_read_gpio(&s_devices[i].device.mcp23017_dev, &readback) == ESP_OK) {
                             if (assembly_mutex != NULL && xSemaphoreTake(assembly_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -96,20 +115,31 @@ static void mcp230xx_update_task(void *pvParameters)
                                 INPUT_ASSEMBLY_100[input_byte_offset + 1] = (uint8_t)(readback >> 8);
                                 xSemaphoreGive(assembly_mutex);
                             }
-                            operation_success = true;
+                            last_readback_time[i] = current_time;
                         }
                     }
                 } else {
                     uint8_t gpio_value = local_output_assembly[output_byte_offset];
                     
-                    if (mcp23008_write_gpio(&s_devices[i].device.mcp23008_dev, gpio_value) == ESP_OK) {
+                    // Only write if value changed
+                    if (gpio_value != last_mcp23008_values[i]) {
+                        if (mcp23008_write_gpio(&s_devices[i].device.mcp23008_dev, gpio_value) == ESP_OK) {
+                            last_mcp23008_values[i] = gpio_value;
+                            operation_success = true;
+                        }
+                    } else {
+                        operation_success = true; // No write needed, but operation is "successful"
+                    }
+                    
+                    // Read back GPIO state periodically for feedback (even if we didn't write)
+                    if (needs_readback && operation_success) {
                         uint8_t readback = 0;
                         if (mcp23008_read_gpio(&s_devices[i].device.mcp23008_dev, &readback) == ESP_OK) {
                             if (assembly_mutex != NULL && xSemaphoreTake(assembly_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                                 INPUT_ASSEMBLY_100[input_byte_offset] = readback;
                                 xSemaphoreGive(assembly_mutex);
                             }
-                            operation_success = true;
+                            last_readback_time[i] = current_time;
                         }
                     }
                 }
@@ -280,7 +310,7 @@ esp_err_t mcp230xx_manager_init(void)
     s_initialized = true;
     ESP_LOGI(TAG, "MCP230XX manager initialized with %d device(s)", s_device_count);
 
-    xTaskCreatePinnedToCore(mcp230xx_update_task, "mcp230xx_task", 4096, NULL, 5, &s_task_handle, 1);
+    xTaskCreate(mcp230xx_update_task, "mcp230xx_task", 4096, NULL, 5, &s_task_handle);
     if (s_task_handle == NULL) {
         ESP_LOGW(TAG, "Failed to create MCP230XX update task");
     }

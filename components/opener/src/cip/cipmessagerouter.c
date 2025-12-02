@@ -99,11 +99,7 @@ void EncodeMessageRouterSupportedObjects(const void *const data,
   /* Count registered classes dynamically */
   CipUint class_count = 0;
   CipMessageRouterObject *obj = g_first_object;
-  CipBool file_object_found = false;
   while(obj != NULL) {
-    if(obj->cip_class->class_code == 0x37) {
-      file_object_found = true;
-    }
     class_count++;
     obj = obj->next;
   }
@@ -148,8 +144,8 @@ void EncodeMessageRouterSupportedObjects(const void *const data,
     }
   }
   
-  /* Save starting position to calculate STRUCT size */
-  size_t struct_start_length = outgoing_message->used_message_length;
+  /* Save starting position to calculate STRUCT size (unused - kept for potential future debugging) */
+  /* size_t struct_start_length = outgoing_message->used_message_length; */
   
   /* Encode STRUCT: ClassesId array (UINT array)
    * Note: The STRUCT format is: ArrayLen, Array elements, MaxConnectionsSupported, NumberOfCurrentConnections
@@ -174,8 +170,8 @@ void EncodeMessageRouterSupportedObjects(const void *const data,
   /* Encode STRUCT: NumberOfCurrentConnections (UINT) */
   AddIntToMessage(instance_data->number_of_current_connections, outgoing_message);
   
-  size_t struct_size = outgoing_message->used_message_length - struct_start_length;
   // Debug logging removed - use OPENER_TRACE_INFO if needed for debugging
+  // size_t struct_size = outgoing_message->used_message_length - struct_start_length;
   // OPENER_TRACE_INFO("Message Router: SupportedObjects STRUCT encoded - STRUCT size: %u bytes (ArrayLen=%u, ArrayElements=%u, MaxConn=%u, NumConn=%u)\n",
   //                  (unsigned)struct_size,
   //                  instance_data->supported_objects_number,

@@ -290,7 +290,7 @@ esp_err_t nau7802_manager_init(void)
         s_task_handle = NULL;
     }
     
-    xTaskCreatePinnedToCore(nau7802_scale_task, "nau7802_task", 4096, NULL, 5, &s_task_handle, 1);
+    xTaskCreate(nau7802_scale_task, "nau7802_task", 4096, NULL, 5, &s_task_handle);
     if (s_task_handle == NULL) {
         ESP_LOGW(TAG, "Failed to create NAU7802 task");
     } else {

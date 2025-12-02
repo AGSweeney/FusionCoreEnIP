@@ -9,6 +9,7 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 ## Table of Contents
 
 - [Hardware Platform](#hardware-platform)
+- [Device Testing Status](#device-testing-status)
 - [EtherNet/IP Protocol Support](#ethernetip-protocol-support)
 - [Sensors and Input Devices](#sensors-and-input-devices)
 - [Output Devices](#output-devices)
@@ -34,6 +35,36 @@ FusionCoreEnIP is a comprehensive EtherNet/IP adapter device built on the ESP32-
 - **Flash**: Partition-based firmware storage with OTA support
 
 **Note on Hardware Support**: This project includes implementations for the hardware components listed in the Sensors and Output Devices sections. However, **use of any specific hardware component is entirely optional** - you can configure the device to use none, some, or all of the supported hardware based on your application needs. The modular component architecture makes it straightforward to **add support for custom hardware** by implementing additional components following the existing patterns. Additionally, **any hardware supported by ESP32/ESP-IDF can be integrated** with some development effort, leveraging the full capabilities of the ESP32 platform. All hardware components can be individually enabled or disabled via configuration.
+
+---
+
+## Device Testing Status
+
+**All Supported Devices Validated and Confirmed Working**
+
+All supported sensors, input devices, and output devices have been validated and confirmed working:
+
+**Sensors and Input Devices:**
+- ✅ **VL53L1X** Time-of-Flight Distance Sensor - Validated and confirmed working (max: 1 device)
+- ✅ **LSM6DS3** 6-DOF IMU - Validated and confirmed working (max: 1 device)
+- ✅ **NAU7802** 24-Bit Weight Scale ADC - Validated and confirmed working (max: 1 device)
+
+**Output Devices:**
+- ✅ **MCP230XX** GPIO Expanders - Validated and confirmed working (max: 8 devices)
+- ✅ **GP8403** DAC (Digital-to-Analog Converter) - Validated and confirmed working (max: 4 devices)
+
+**Hardware Verification Testing:**
+During validation testing, all devices were tested simultaneously with the following configuration:
+
+| Device | QTY Tested | Max Supported |
+|--------|------------|---------------|
+| VL53L1X | 1 | 1 |
+| LSM6DS3 | 1 | 1 |
+| NAU7802 | 1 | 1 |
+| MCP23008 | 2 | 8 |
+| GP8403 | 1 | 4 |
+
+All devices operated correctly when connected simultaneously on the I2C bus.
 
 ---
 
@@ -329,9 +360,10 @@ See [Complete API Documentation](docs/API_Endpoints.md) for detailed endpoint re
   - Larger TCP buffers (32KB send/receive windows)
   - IRAM optimizations for real-time performance
   - Task affinity configured for optimal core assignment:
-    - **Core 0**: Network services (LWIP TCP/IP task, OpENer EtherNet/IP task, Web server)
-    - **Core 1**: I/O services (sensor reading tasks: VL53L1X, LSM6DS3, NAU7802, GP8403, MCP230XX)
-    - This separation provides dedicated CPU resources for real-time network communication while isolating I/O operations
+    - **Core 0 (pinned)**: Network services (LWIP TCP/IP task, OpENer EtherNet/IP task, Web server)
+    - **Core 0 & 1 (unpinned)**: I/O services (sensor reading tasks: VL53L1X, LSM6DS3, NAU7802, GP8403, MCP230XX)
+    - Network tasks are pinned to Core 0 for predictable, low-latency performance
+    - I/O tasks are distributed across both cores by the FreeRTOS scheduler, reducing I2C bus contention
 - See [LWIP Modifications Documentation](docs/LWIP_MODIFICATIONS.md) for complete details
 
 ---
@@ -625,6 +657,7 @@ Key configuration options available via `idf.py menuconfig`:
 - `components/webui/README.md` - Web interface and REST API documentation
 - `components/lldp/README.md` - LLDP protocol implementation
 - `components/vl53l1x_uld/README.md` - VL53L1X sensor driver
+- `components/lsm6ds3/README.md` - LSM6DS3 IMU driver
 - `components/nau7802/README.md` - NAU7802 scale driver
 - `components/gp8403_dac/README.md` - GP8403 DAC driver
 - `components/mcp23017/README.md` - MCP23017 GPIO expander

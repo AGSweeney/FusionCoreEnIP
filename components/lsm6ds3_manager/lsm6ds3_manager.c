@@ -24,7 +24,8 @@ static const char *TAG = "lsm6ds3_manager";
 static bool s_initialized = false;
 static lsm6ds3_handle_t s_lsm6ds3_device;
 static lsm6ds3_complementary_filter_t s_complementary_filter;
-static lsm6ds3_madgwick_filter_t s_madgwick_filter;
+/* Madgwick filter not currently used - kept for future implementation */
+/* static lsm6ds3_madgwick_filter_t s_madgwick_filter; */
 static lsm6ds3_angle_zero_t s_angle_zero;
 static TaskHandle_t s_task_handle = NULL;
 static uint8_t s_i2c_address = 0;
@@ -268,7 +269,7 @@ esp_err_t lsm6ds3_manager_init(void)
     s_initialized = true;
     ESP_LOGI(TAG, "LSM6DS3 manager initialized successfully at address 0x%02X", address);
 
-    xTaskCreatePinnedToCore(lsm6ds3_update_task, "lsm6ds3_task", 4096, NULL, 5, &s_task_handle, 1);
+    xTaskCreate(lsm6ds3_update_task, "lsm6ds3_task", 4096, NULL, 5, &s_task_handle);
     if (s_task_handle == NULL) {
         ESP_LOGW(TAG, "Failed to create LSM6DS3 update task");
     }

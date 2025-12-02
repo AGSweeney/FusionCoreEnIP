@@ -566,7 +566,7 @@ if (status == 0) {
 
 ### Data Update Rate
 
-The sensor data is updated at the configured rate (default: 10 Hz / 100ms). The input assembly buffer is continuously updated by the sensor task running on Core 1, independent of EtherNet/IP communication.
+The sensor data is updated at the configured rate (default: 10 Hz / 100ms). The input assembly buffer is continuously updated by the sensor task, independent of EtherNet/IP communication.
 
 **Note:** Bytes 9-31 of the input assembly are available for other application data and are not overwritten by the sensor task.
 

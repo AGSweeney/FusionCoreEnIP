@@ -16,7 +16,7 @@ static const char *TAG = "gp8403_dac_manager";
 
 #define GP8403_DAC_MAX_DEVICES 4
 #define GP8403_DAC_BASE_ADDRESS 0x58
-#define GP8403_DAC_UPDATE_INTERVAL_MS 20
+#define GP8403_DAC_UPDATE_INTERVAL_MS 50  // Poll every 50ms - DAC holds value, only need to detect changes
 
 typedef struct {
     gp8403_dac_handle_t *handle;
@@ -33,8 +33,6 @@ static void gp8403_dac_update_task(void *pvParameters)
     (void)pvParameters;
     const TickType_t update_interval = pdMS_TO_TICKS(GP8403_DAC_UPDATE_INTERVAL_MS);
 
-    ESP_LOGI(TAG, "GP8403 DAC update task started");
-
     while (1) {
         // Check if OTA is in progress - skip I2C operations to avoid errors
         ota_status_info_t ota_status;
@@ -47,6 +45,7 @@ static void gp8403_dac_update_task(void *pvParameters)
         
         if (s_initialized) {
             uint16_t channel_values[GP8403_DAC_MAX_DEVICES * 2] = {0};
+            
             SemaphoreHandle_t assembly_mutex = fusion_core_get_assembly_mutex();
             if (assembly_mutex != NULL && xSemaphoreTake(assembly_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 for (int i = 0; i < GP8403_DAC_MAX_DEVICES; i++) {
@@ -64,11 +63,29 @@ static void gp8403_dac_update_task(void *pvParameters)
                     uint16_t channel0_raw = channel_values[i * 2];
                     uint16_t channel1_raw = channel_values[i * 2 + 1];
                     
-                    if (channel0_raw > 0xFFF) channel0_raw = 0xFFF;
-                    if (channel1_raw > 0xFFF) channel1_raw = 0xFFF;
+                    // Clamp values to valid 12-bit range (0-4095)
+                    if (channel0_raw > 0xFFF) {
+                        channel0_raw = 0xFFF;
+                    }
+                    if (channel1_raw > 0xFFF) {
+                        channel1_raw = 0xFFF;
+                    }
                     
-                    gp8403_dac_set_raw(s_devices[i].handle, GP8403_CHANNEL_0, channel0_raw);
-                    gp8403_dac_set_raw(s_devices[i].handle, GP8403_CHANNEL_1, channel1_raw);
+                    // Only write if value changed (to reduce bus contention)
+                    static uint16_t last_values[GP8403_DAC_MAX_DEVICES * 2] = {0};
+                    bool ch0_changed = (last_values[i * 2] != channel0_raw);
+                    bool ch1_changed = (last_values[i * 2 + 1] != channel1_raw);
+                    
+                    // Only write channels that changed to reduce bus contention
+                    if (ch0_changed) {
+                        gp8403_dac_set_raw(s_devices[i].handle, GP8403_CHANNEL_0, channel0_raw);
+                    }
+                    if (ch1_changed) {
+                        gp8403_dac_set_raw(s_devices[i].handle, GP8403_CHANNEL_1, channel1_raw);
+                    }
+                    
+                    last_values[i * 2] = channel0_raw;
+                    last_values[i * 2 + 1] = channel1_raw;
                 }
             }
         }
@@ -79,12 +96,10 @@ static void gp8403_dac_update_task(void *pvParameters)
 esp_err_t gp8403_dac_manager_init(void)
 {
     if (s_initialized) {
-        ESP_LOGW(TAG, "GP8403 DAC manager already initialized");
         return ESP_OK;
     }
 
     if (!system_gp8403_dac_enabled_load()) {
-        ESP_LOGI(TAG, "GP8403 DAC is disabled in configuration");
         return ESP_OK;
     }
 
@@ -129,26 +144,17 @@ esp_err_t gp8403_dac_manager_init(void)
                 s_devices[device_count].address = addr;
                 s_devices[device_count].initialized = true;
                 device_count++;
-                ESP_LOGI(TAG, "GP8403 DAC initialized at address 0x%02X on %s bus", 
-                         addr, (bus_handle == primary_bus) ? "primary" : "secondary");
-            } else {
-                ESP_LOGW(TAG, "Failed to initialize GP8403 DAC at address 0x%02X", addr);
             }
         }
     }
 
     if (device_count == 0) {
-        ESP_LOGI(TAG, "No GP8403 DAC devices detected");
         return ESP_OK;
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "GP8403 DAC manager initialized with %d device(s)", device_count);
 
-    xTaskCreatePinnedToCore(gp8403_dac_update_task, "gp8403_dac_task", 4096, NULL, 5, &s_task_handle, 1);
-    if (s_task_handle == NULL) {
-        ESP_LOGW(TAG, "Failed to create GP8403 DAC update task");
-    }
+    xTaskCreate(gp8403_dac_update_task, "gp8403_dac_task", 4096, NULL, 5, &s_task_handle);
 
     return ESP_OK;
 }

@@ -50,11 +50,13 @@
 static const char *TAG = "gp8403_dac";
 
 // GP8403 I2C register addresses
-// Note: These are typical DAC register addresses. Actual addresses may vary
-// based on GP8403 datasheet. Adjust if needed after verifying datasheet.
-#define GP8403_REG_CHANNEL0_DATA    0x00  // Channel 0 data register (12-bit)
-#define GP8403_REG_CHANNEL1_DATA    0x01  // Channel 1 data register (12-bit)
-#define GP8403_REG_CONTROL          0x02  // Control register (if exists)
+#define GP8403_REG_VSEL           0x01  // Voltage level register (0x00 = 5V, 0x11 = 10V)
+#define GP8403_REG_CHANNEL0_DATA  0x02  // Channel 0 data register (12-bit)
+#define GP8403_REG_CHANNEL1_DATA  0x04  // Channel 1 data register (12-bit)
+
+// Voltage selection values
+#define GP8403_VSEL_5V            0x00  // 5V output range
+#define GP8403_VSEL_10V           0x11  // 10V output range
 
 // I2C transaction timeout (ms)
 #define GP8403_I2C_TIMEOUT_MS       100
@@ -94,13 +96,20 @@ static esp_err_t gp8403_write_register(gp8403_dac_handle_t *handle, uint8_t reg,
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Prepare data: 12-bit value, typically sent as 2 bytes (MSB first)
-    // Format: [reg_addr] [data_high] [data_low]
-    // Data format: 12-bit value in bits [11:0], upper 4 bits typically unused
+    // Prepare data: GP8403 expects 12-bit format per datasheet and Arduino example
+    // Format: [reg] [data_high_byte] [data_low_byte]
+    // DATA High: bits 11-4 (8 bits) - shift value left by 4, take upper 8 bits
+    // DATA Low: bits 3-0 in upper nibble (4 bits) - shift value left by 4, take lower byte
+    // Per Arduino example: shift left 4, extract bytes, swap, then send high byte first
     uint8_t write_data[3];
     write_data[0] = reg;
-    write_data[1] = (data >> 8) & 0x0F;  // Upper 4 bits of 12-bit value
-    write_data[2] = data & 0xFF;         // Lower 8 bits
+    // Format per Arduino example: shift left 4, extract bytes, swap
+    uint16_t shifted = data << 4;                    // Shift 12-bit value left by 4
+    uint8_t hibyte = (shifted & 0xFF00) >> 8;       // Extract bits 11-4 (upper 8 bits)
+    uint8_t lobyte = shifted & 0xFF;                // Extract bits 3-0 in upper nibble (lower byte)
+    uint16_t swapped = (lobyte << 8) | hibyte;       // Swap bytes: low becomes high, high becomes low
+    write_data[1] = (swapped >> 8) & 0xFF;           // High byte (was low byte)
+    write_data[2] = swapped & 0xFF;                 // Low byte (was high byte)
 
     esp_err_t err = i2c_master_transmit(
         handle->dev_handle,
@@ -115,7 +124,40 @@ static esp_err_t gp8403_write_register(gp8403_dac_handle_t *handle, uint8_t reg,
         return err;
     }
 
-    ESP_LOGD(TAG, "Write reg=0x%02X, data=0x%03X", reg, data);
+    // Small delay after write to allow GP8403 to process and release bus
+    // This helps prevent bus contention with other I2C devices
+    vTaskDelay(pdMS_TO_TICKS(1));
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Set GP8403 voltage output range (5V or 10V)
+ */
+static esp_err_t gp8403_set_voltage_range(gp8403_dac_handle_t *handle, uint8_t vsel)
+{
+    if (handle == NULL || !handle->initialized) {
+        ESP_LOGE(TAG, "Invalid handle or not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint8_t write_data[2];
+    write_data[0] = GP8403_REG_VSEL;
+    write_data[1] = vsel;
+
+    esp_err_t err = i2c_master_transmit(
+        handle->dev_handle,
+        write_data,
+        sizeof(write_data),
+        pdMS_TO_TICKS(GP8403_I2C_TIMEOUT_MS)
+    );
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set voltage range: %s (vsel=0x%02X)", 
+                 esp_err_to_name(err), vsel);
+        return err;
+    }
+
     return ESP_OK;
 }
 
@@ -173,13 +215,25 @@ bool gp8403_dac_init(const gp8403_dac_config_t *config, gp8403_dac_handle_t **ha
     dev_handle->channel0_voltage = 0.0f;
     dev_handle->channel1_voltage = 0.0f;
 
+    // Configure for 10V output range - MUST be done before writing channel values
+    esp_err_t vsel_err = gp8403_set_voltage_range(dev_handle, GP8403_VSEL_10V);
+    if (vsel_err != ESP_OK) {
+        ESP_LOGE(TAG, "CRITICAL: Failed to set 10V range - DAC may not output correctly! Error: %s", 
+                 esp_err_to_name(vsel_err));
+        // Don't continue if VSEL fails - device won't work correctly
+        free(dev_handle);
+        return false;
+    }
+    
+    // Small delay after VSEL to ensure it's processed
+    vTaskDelay(pdMS_TO_TICKS(10));
+    
     // Initialize both channels to 0V
     gp8403_write_register(dev_handle, GP8403_REG_CHANNEL0_DATA, 0x000);
     gp8403_write_register(dev_handle, GP8403_REG_CHANNEL1_DATA, 0x000);
 
     *handle = dev_handle;
 
-    ESP_LOGI(TAG, "GP8403 DAC initialized at I2C address 0x%02X", i2c_addr);
     return true;
 }
 
@@ -205,8 +259,6 @@ void gp8403_dac_deinit(gp8403_dac_handle_t **handle)
     // Free handle
     free(dev_handle);
     *handle = NULL;
-
-    ESP_LOGI(TAG, "GP8403 DAC deinitialized");
 }
 
 bool gp8403_dac_set_voltage(gp8403_dac_handle_t *handle, gp8403_channel_t channel, float voltage)
@@ -223,9 +275,6 @@ bool gp8403_dac_set_voltage(gp8403_dac_handle_t *handle, gp8403_channel_t channe
 
     // Clamp voltage to valid range
     float clamped_voltage = clamp_voltage(voltage);
-    if (clamped_voltage != voltage) {
-        ESP_LOGW(TAG, "Voltage %.3fV clamped to %.3fV", voltage, clamped_voltage);
-    }
 
     // Convert voltage to raw DAC value
     uint16_t dac_value = gp8403_dac_voltage_to_raw(clamped_voltage);
@@ -246,7 +295,6 @@ bool gp8403_dac_set_voltage(gp8403_dac_handle_t *handle, gp8403_channel_t channe
         handle->channel1_voltage = clamped_voltage;
     }
 
-    ESP_LOGD(TAG, "Channel %d set to %.3fV (DAC=0x%03X)", channel, clamped_voltage, dac_value);
     return true;
 }
 
@@ -264,9 +312,6 @@ bool gp8403_dac_set_raw(gp8403_dac_handle_t *handle, gp8403_channel_t channel, u
 
     // Clamp DAC value
     uint16_t clamped_value = clamp_dac_value(dac_value);
-    if (clamped_value != dac_value) {
-        ESP_LOGW(TAG, "DAC value 0x%03X clamped to 0x%03X", dac_value, clamped_value);
-    }
 
     // Select register based on channel
     uint8_t reg = (channel == GP8403_CHANNEL_0) ? GP8403_REG_CHANNEL0_DATA : GP8403_REG_CHANNEL1_DATA;
@@ -274,10 +319,13 @@ bool gp8403_dac_set_raw(gp8403_dac_handle_t *handle, gp8403_channel_t channel, u
     // Write to DAC
     esp_err_t err = gp8403_write_register(handle, reg, clamped_value);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "GP8403 channel %d write failed: %s (reg=0x%02X, value=0x%04X)", 
+                 channel, esp_err_to_name(err), reg, clamped_value);
         return false;
     }
 
     // Update cached voltage
+    // Calculate voltage from 12-bit value (0-4095 → 0-10V)
     float voltage = gp8403_dac_raw_to_voltage(clamped_value);
     if (channel == GP8403_CHANNEL_0) {
         handle->channel0_voltage = voltage;
@@ -285,7 +333,6 @@ bool gp8403_dac_set_raw(gp8403_dac_handle_t *handle, gp8403_channel_t channel, u
         handle->channel1_voltage = voltage;
     }
 
-    ESP_LOGD(TAG, "Channel %d set to raw 0x%03X (%.3fV)", channel, clamped_value, voltage);
     return true;
 }
 

@@ -258,7 +258,7 @@ esp_err_t vl53l1x_manager_init(void)
     s_initialized = true;
     ESP_LOGI(TAG, "VL53L1X manager initialized successfully");
 
-    xTaskCreatePinnedToCore(vl53l1x_update_task, "vl53l1x_task", 4096, NULL, 5, &s_task_handle, 1);
+    xTaskCreate(vl53l1x_update_task, "vl53l1x_task", 4096, NULL, 5, &s_task_handle);
     if (s_task_handle == NULL) {
         ESP_LOGW(TAG, "Failed to create VL53L1X update task");
     }

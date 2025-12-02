@@ -611,12 +611,6 @@ bool system_i2c_internal_pullup_save(bool enabled)
 
 bool system_i2c_primary_pullup_load(void)
 {
-    #ifdef CONFIG_OPENER_I2C_INTERNAL_PULLUP
-    bool default_enabled = CONFIG_OPENER_I2C_INTERNAL_PULLUP;
-    #else
-    bool default_enabled = false;
-    #endif
-    
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
@@ -675,12 +669,6 @@ bool system_i2c_primary_pullup_save(bool enabled)
 
 bool system_i2c_secondary_pullup_load(void)
 {
-    #ifdef CONFIG_OPENER_I2C_INTERNAL_PULLUP
-    bool default_enabled = CONFIG_OPENER_I2C_INTERNAL_PULLUP;
-    #else
-    bool default_enabled = false;
-    #endif
-    
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {

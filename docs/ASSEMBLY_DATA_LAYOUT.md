@@ -176,11 +176,19 @@ The Output Assembly contains control data that PLCs and other EtherNet/IP client
 | 30-31 | Device 0x5B Ch1 | uint16_t | GP8403 at address 0x5B, Channel 1 value (0-4095, 12-bit, little-endian) |
 
 **Notes:**
-- Maximum of 4 GP8403 devices supported (addresses 0x58-0x5B)
-- Each device has 2 channels (Ch0 and Ch1)
-- Each channel value is 12-bit (0-4095) stored in 2 bytes (little-endian)
-- Devices are mapped by I2C address in ascending order
-- Unused devices (not detected) will have 0x0000 written
+- **Maximum devices**: 4 GP8403 devices supported (I2C addresses 0x58-0x5B)
+- **Channels**: Each device has 2 independent channels (Ch0 = VOUT0, Ch1 = VOUT1)
+- **Resolution**: 12-bit (0x000-0xFFF, decimal 0-4095)
+- **Output range**: 0.0V to 10.0V per channel
+- **Data format**: 12-bit value stored as little-endian uint16_t (2 bytes)
+- **Voltage conversion**: 
+  - Value to voltage: `voltage = (dac_value / 4095.0) × 10.0`
+  - Voltage to value: `dac_value = (voltage / 10.0) × 4095`
+- **Value clamping**: Values > 4095 (0xFFF) are automatically clamped to 4095
+- **Device mapping**: Devices are mapped by I2C address in ascending order (0x58, 0x59, 0x5A, 0x5B)
+- **Unused devices**: Devices not detected during initialization will have 0x0000 written (0V output)
+- **Update behavior**: Values are only written to the DAC when they change (reduces I2C traffic)
+- **I2C protocol**: The 12-bit value is formatted per GP8403 datasheet (shifted left 4 bits, bytes swapped) before I2C transmission
 
 ---
 
@@ -243,7 +251,12 @@ GP8403 devices are mapped by I2C address in ascending order:
 | 0x5A | 24-27 | Channel 0 (24-25), Channel 1 (26-27) |
 | 0x5B | 28-31 | Channel 0 (28-29), Channel 1 (30-31) |
 
-**Note:** Only the first 4 detected devices (0x58-0x5B) are supported.
+**Notes:**
+- Only the first 4 detected devices (I2C addresses 0x58-0x5B) are supported
+- Each device requires a separate 9-36V VIN power supply (in addition to I2C VCC) for output generation
+- Output voltage range: 0.0V to 10.0V (configured at initialization)
+- Resolution: 12-bit (4096 steps, ~2.44 mV per step)
+- Output accuracy: < 0.5% voltage error, < 0.1% linearity error
 
 ---
 
@@ -265,7 +278,7 @@ GP8403 devices are mapped by I2C address in ascending order:
    - LSM6DS3: ~10 Hz (100 ms interval)
    - NAU7802: ~10 Hz (100 ms interval)
    - MCP230XX: ~50 Hz (20 ms interval)
-   - GP8403: Continuous (writes on value change)
+   - GP8403: ~20 Hz (50 ms polling interval, writes only on value change)
 
 3. **Device Detection**: Device counts are set during boot-time I2C scanning and updated once after all managers initialize
 

@@ -917,7 +917,8 @@ EipStatus SetAttributeAll(CipInstance *RESTRICT const instance,
   message_router_response->general_status = kCipErrorSuccess;
 
   /* Track position in request data buffer */
-  EipUint8 *data_position = message_router_request->data;
+  /* Note: data is const in request, but we need non-const for position tracking */
+  EipUint8 *data_position = (EipUint8 *)message_router_request->data;
   EipInt16 remaining_data = message_router_request->request_data_size;
 
   /* Iterate through all attributes (same order as GetAttributeAll) */

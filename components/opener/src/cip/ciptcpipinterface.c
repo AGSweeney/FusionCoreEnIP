@@ -692,7 +692,7 @@ static int DecodeTcpIpSelectAcd(void *const data,
   return 1;
 }
 
-static int DecodeCipTcpIpQuickConnect( /* Attribute 12 */
+__attribute__((unused)) static int DecodeCipTcpIpQuickConnect( /* Attribute 12 */
 		void *const data,
 		CipMessageRouterRequest *const message_router_request,
 		CipMessageRouterResponse *const message_router_response) {
