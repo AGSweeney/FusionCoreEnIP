@@ -124,8 +124,14 @@ static void vl53l1x_update_task(void *pvParameters)
 {
     (void)pvParameters;
     const TickType_t update_interval = pdMS_TO_TICKS(VL53L1X_UPDATE_INTERVAL_MS);
+    uint32_t consecutive_errors = 0;
+    const uint32_t max_consecutive_errors = 10;
+    const TickType_t error_backoff_delay = pdMS_TO_TICKS(500);
 
     ESP_LOGI(TAG, "VL53L1X update task started");
+    
+    // Wait for I2C bus to stabilize after reboot (especially after OTA)
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     while (1) {
         // Check if OTA is in progress - skip I2C operations to avoid errors
@@ -133,6 +139,7 @@ static void vl53l1x_update_task(void *pvParameters)
         if (ota_manager_get_status(&ota_status) && 
             ota_status.status == OTA_STATUS_IN_PROGRESS) {
             // OTA in progress - skip I2C operations to avoid errors
+            consecutive_errors = 0; // Reset error counter
             vTaskDelay(update_interval);
             continue;
         }
@@ -142,6 +149,8 @@ static void vl53l1x_update_task(void *pvParameters)
             VL53L1X_ERROR err = VL53L1X_CheckForDataReady(s_vl53l1x_device.dev, &is_data_ready);
             
             if (err == VL53L1X_ERROR_NONE && is_data_ready) {
+                consecutive_errors = 0; // Reset error counter on success
+                
                 uint16_t distance = vl53l1x_get_mm(&s_vl53l1x_device);
                 
                 uint16_t ambient = 0;
@@ -163,6 +172,23 @@ static void vl53l1x_update_task(void *pvParameters)
                     memcpy(&INPUT_ASSEMBLY_100[VL53L1X_BYTE_START + 5], &sig_per_spad, sizeof(uint16_t));
                     memcpy(&INPUT_ASSEMBLY_100[VL53L1X_BYTE_START + 7], &num_spads, sizeof(uint16_t));
                     xSemaphoreGive(assembly_mutex);
+                }
+            } else if (err != VL53L1X_ERROR_NONE) {
+                // I2C error detected (timeout, invalid state, etc.)
+                consecutive_errors++;
+                
+                if (consecutive_errors <= 3) {
+                    // Log first few errors for debugging
+                    ESP_LOGD(TAG, "VL53L1X CheckForDataReady error: %d (consecutive: %lu)", err, consecutive_errors);
+                } else if (consecutive_errors == max_consecutive_errors) {
+                    // Log when we hit max errors and back off
+                    ESP_LOGW(TAG, "VL53L1X repeated I2C errors (%lu), backing off", consecutive_errors);
+                }
+                
+                // Back off if we get too many consecutive errors (I2C bus may not be ready)
+                if (consecutive_errors >= max_consecutive_errors) {
+                    vTaskDelay(error_backoff_delay);
+                    consecutive_errors = 0; // Reset after backoff
                 }
             }
         }
