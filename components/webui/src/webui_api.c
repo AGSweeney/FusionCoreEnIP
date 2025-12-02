@@ -859,10 +859,12 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
         cJSON_Delete(json);
         return send_json_error(req, "Invalid URL", 400);
     }
-    cJSON_Delete(json);
     
     ESP_LOGI(TAG, "Starting OTA update from URL: %s", url);
     bool success = ota_manager_start_update(url);
+    
+    // Delete JSON after using the URL string (url pointer points into json memory)
+    cJSON_Delete(json);
     
     cJSON *response = cJSON_CreateObject();
     if (success) {

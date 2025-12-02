@@ -45,6 +45,10 @@ static void ota_task(void *pvParameters)
 {
     const char *url = (const char *)pvParameters;
     
+    // Log URL for debugging
+    ESP_LOGI(TAG, "OTA task started with URL: %s", url ? url : "(null)");
+    ESP_LOGI(TAG, "URL length: %d", url ? strlen(url) : 0);
+    
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 5000,
