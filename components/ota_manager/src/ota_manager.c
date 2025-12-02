@@ -47,6 +47,7 @@ static void ota_task(void *pvParameters)
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 5000,
+        .skip_cert_common_name_check = true,  // Skip CN check for development/testing
     };
     
     esp_https_ota_config_t ota_config = {
