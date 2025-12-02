@@ -175,7 +175,12 @@ bool i2c_read(const dev_handle_t *device, uint16_t reg, uint8_t *buf, size_t len
 
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "i2c_read failed on reg 0x%04X: %s", reg, esp_err_to_name(err));
+        // Log at DEBUG level for INVALID_STATE (common after reboot/OTA), WARNING for others
+        if (err == ESP_ERR_INVALID_STATE) {
+            ESP_LOGD(TAG, "i2c_read failed on reg 0x%04X: %s (bus not ready)", reg, esp_err_to_name(err));
+        } else {
+            ESP_LOGW(TAG, "i2c_read failed on reg 0x%04X: %s", reg, esp_err_to_name(err));
+        }
         return false;
     }
     return true;
@@ -218,7 +223,12 @@ int8_t i2c_write_multi(uint16_t dev, uint16_t index, uint8_t *pdata, uint32_t co
     
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "I2C write multi failed at index 0x%04X, count %lu: %s", index, count, esp_err_to_name(err));
+        // Log at DEBUG level for INVALID_STATE (common after reboot/OTA), WARNING for others
+        if (err == ESP_ERR_INVALID_STATE) {
+            ESP_LOGD(TAG, "I2C write multi failed at index 0x%04X, count %lu: %s (bus not ready)", index, count, esp_err_to_name(err));
+        } else {
+            ESP_LOGW(TAG, "I2C write multi failed at index 0x%04X, count %lu: %s", index, count, esp_err_to_name(err));
+        }
         return 255;
     }
 

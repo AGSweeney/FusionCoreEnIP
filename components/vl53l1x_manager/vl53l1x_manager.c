@@ -125,8 +125,9 @@ static void vl53l1x_update_task(void *pvParameters)
     (void)pvParameters;
     const TickType_t update_interval = pdMS_TO_TICKS(VL53L1X_UPDATE_INTERVAL_MS);
     uint32_t consecutive_errors = 0;
-    const uint32_t max_consecutive_errors = 10;
-    const TickType_t error_backoff_delay = pdMS_TO_TICKS(500);
+    const uint32_t max_consecutive_errors = 5;  // Back off after 5 errors
+    const TickType_t error_backoff_delay = pdMS_TO_TICKS(100);  // Short backoff
+    const uint32_t max_total_errors_before_disable = 25;  // Disable after 25 consecutive errors (~0.5 second)
 
     ESP_LOGI(TAG, "VL53L1X update task started");
     
@@ -177,18 +178,29 @@ static void vl53l1x_update_task(void *pvParameters)
                 // I2C error detected (timeout, invalid state, etc.)
                 consecutive_errors++;
                 
-                if (consecutive_errors <= 3) {
-                    // Log first few errors for debugging
-                    ESP_LOGD(TAG, "VL53L1X CheckForDataReady error: %d (consecutive: %lu)", err, consecutive_errors);
+                if (consecutive_errors == 1) {
+                    // Log first error for debugging
+                    ESP_LOGW(TAG, "VL53L1X CheckForDataReady error: %d (attempt %lu)", err, consecutive_errors);
                 } else if (consecutive_errors == max_consecutive_errors) {
                     // Log when we hit max errors and back off
                     ESP_LOGW(TAG, "VL53L1X repeated I2C errors (%lu), backing off", consecutive_errors);
+                } else if (consecutive_errors >= max_total_errors_before_disable) {
+                    // After 50+ consecutive errors (~1 second), device is likely disconnected/faulty
+                    ESP_LOGE(TAG, "VL53L1X device not responding after %lu attempts - disabling manager", consecutive_errors);
+                    ESP_LOGE(TAG, "To re-enable, disable and re-enable VL53L1X in configuration, then reboot");
+                    
+                    // Mark as not initialized to stop further attempts
+                    s_initialized = false;
+                    
+                    // Exit the task
+                    vTaskDelete(NULL);
+                    return;
                 }
                 
                 // Back off if we get too many consecutive errors (I2C bus may not be ready)
-                if (consecutive_errors >= max_consecutive_errors) {
+                if (consecutive_errors >= max_consecutive_errors && consecutive_errors < max_total_errors_before_disable) {
                     vTaskDelay(error_backoff_delay);
-                    consecutive_errors = 0; // Reset after backoff
+                    // Don't reset counter - we want to track total consecutive errors
                 }
             }
         }
@@ -280,6 +292,15 @@ esp_err_t vl53l1x_manager_init(void)
     system_vl53l1x_config_load(&s_config);
     vTaskDelay(pdMS_TO_TICKS(100));
     vl53l1x_manager_apply_config();
+    
+    // Test if device is actually responding after initialization
+    uint8_t test_ready = 0;
+    VL53L1X_ERROR test_err = VL53L1X_CheckForDataReady(s_vl53l1x_device.dev, &test_ready);
+    if (test_err != VL53L1X_ERROR_NONE) {
+        ESP_LOGW(TAG, "VL53L1X device not responding after initialization (error: %d)", test_err);
+        ESP_LOGW(TAG, "Device may need more time to boot or may be faulty");
+        // Continue anyway - the update task will handle errors and auto-disable if persistent
+    }
 
     s_initialized = true;
     ESP_LOGI(TAG, "VL53L1X manager initialized successfully");
