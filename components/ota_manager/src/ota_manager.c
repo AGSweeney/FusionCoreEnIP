@@ -26,6 +26,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_log.h"
+#include "esp_crt_bundle.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -47,7 +48,7 @@ static void ota_task(void *pvParameters)
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 5000,
-        .skip_cert_common_name_check = true,  // Skip CN check for development/testing
+        .crt_bundle_attach = esp_crt_bundle_attach,  // Use certificate bundle for server verification
     };
     
     esp_https_ota_config_t ota_config = {
