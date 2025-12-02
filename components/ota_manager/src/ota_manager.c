@@ -52,6 +52,8 @@ static void ota_task(void *pvParameters)
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 5000,
+        .buffer_size = 4096,  // Increase buffer size for better download speed
+        .buffer_size_tx = 4096,
         .crt_bundle_attach = esp_crt_bundle_attach,  // Use certificate bundle for server verification
     };
     
@@ -82,24 +84,34 @@ static void ota_task(void *pvParameters)
     xSemaphoreGive(s_ota_mutex);
     
     esp_err_t ota_finish_err = ESP_OK;
+    int progress_count = 0;
+    int image_size = esp_https_ota_get_image_size(https_ota_handle);
+    ESP_LOGI(TAG, "OTA firmware size: %d bytes", image_size);
+    
     while (1) {
         err = esp_https_ota_perform(https_ota_handle);
         if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
             break;
         }
         
-        // Update progress (simplified - just indicate we're downloading)
-        esp_app_desc_t new_app_info;
-        if (esp_https_ota_get_img_desc(https_ota_handle, &new_app_info) == ESP_OK) {
-            // Image header received, update progress indicator
-            xSemaphoreTake(s_ota_mutex, portMAX_DELAY);
-            if (s_ota_status.progress < 90) {
-                s_ota_status.progress += 1; // Increment progress gradually
-            }
-            snprintf(s_ota_status.message, sizeof(s_ota_status.message), 
-                    "Downloading firmware...");
-            xSemaphoreGive(s_ota_mutex);
+        progress_count++;
+        
+        // Log progress with byte count every 10 iterations (~1 second)
+        if (progress_count % 10 == 0) {
+            int bytes_read = esp_https_ota_get_image_len_read(https_ota_handle);
+            int percent = (image_size > 0) ? (bytes_read * 100 / image_size) : 0;
+            ESP_LOGI(TAG, "OTA download: %d/%d bytes (%d%%)", bytes_read, image_size, percent);
         }
+        
+        // Update progress status
+        int bytes_read = esp_https_ota_get_image_len_read(https_ota_handle);
+        xSemaphoreTake(s_ota_mutex, portMAX_DELAY);
+        if (image_size > 0) {
+            s_ota_status.progress = (bytes_read * 100) / image_size;
+        }
+        snprintf(s_ota_status.message, sizeof(s_ota_status.message), 
+                "Downloading: %d/%d bytes", bytes_read, image_size);
+        xSemaphoreGive(s_ota_mutex);
         
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -188,7 +200,8 @@ bool ota_manager_start_update(const char *url)
         return false;
     }
     
-    BaseType_t result = xTaskCreate(ota_task, "ota_task", 8192, url_copy, 5, &s_ota_task_handle);
+    // Pin OTA task to Core 1 to avoid contention with network stack on Core 0
+    BaseType_t result = xTaskCreatePinnedToCore(ota_task, "ota_task", 8192, url_copy, 5, &s_ota_task_handle, 1);
     if (result != pdPASS) {
         xSemaphoreGive(s_ota_mutex);
         ESP_LOGE(TAG, "Failed to create OTA task");
@@ -375,7 +388,8 @@ bool ota_manager_start_update_from_data(const uint8_t *data, size_t data_len)
     memcpy(ota_data->data, data, data_len);
     ota_data->len = data_len;
     
-    BaseType_t result = xTaskCreate(ota_update_from_data_task, "ota_task", 8192, ota_data, 5, &s_ota_task_handle);
+    // Pin OTA task to Core 1 to avoid contention with network stack on Core 0
+    BaseType_t result = xTaskCreatePinnedToCore(ota_update_from_data_task, "ota_task", 8192, ota_data, 5, &s_ota_task_handle, 1);
     if (result != pdPASS) {
         xSemaphoreGive(s_ota_mutex);
         ESP_LOGE(TAG, "Failed to create OTA task");
