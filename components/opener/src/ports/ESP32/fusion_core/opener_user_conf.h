@@ -90,6 +90,18 @@
 
 #define PC_OPENER_ETHERNET_BUFFER_SIZE 512
 
+/** 
+ * @brief Enable randomized connection IDs for enhanced security
+ * 
+ * When defined, connection IDs use random number generation instead of 
+ * sequential counters. This prevents connection ID prediction attacks
+ * and improves overall stack security posture.
+ * 
+ * Trade-off: Connection IDs are harder to trace in Wireshark/logs,
+ * but provides better security against connection spoofing attacks.
+ */
+#define OPENER_RANDOMIZE_CONNECTION_ID
+
 // LLDP Configuration
 #ifndef OPENER_LLDP_ENABLED
   #define OPENER_LLDP_ENABLED 1
