@@ -136,14 +136,16 @@ The device implements the following CIP objects:
 ### CIP Parameter Object (Class 0x0F)
 
 - **Standard CIP Parameter Object**: Provides standardized access to device configuration parameters via EtherNet/IP
-- **54 Parameter Instances**: Comprehensive device configuration and monitoring
+- **60 Parameter Instances**: Comprehensive device configuration and monitoring
   - Network configuration parameters (IP address, subnet, gateway, DNS, DHCP, hostname, domain, multicast TTL, ACD settings)
   - NAU7802 scale configuration (enabled, unit, gain, sample rate, channel, LDO, averaging)
   - VL53L1X sensor configuration (enabled, distance mode, timing budget, ROI settings, thresholds, calibration)
   - Connection parameters (default RPI, max connections, assembly sizes)
+  - Security/management parameters (Web API enable/disable)
 - **Services**: GetAttributeSingle, GetAttributeAll, SetAttributeSingle (for writable parameters)
 - **NVS Persistence**: Automatic persistence of configuration changes to Non-Volatile Storage
 - **Parameter Metadata**: Each parameter includes name, units, help string, min/max values, default values, and data type codes
+- **Web API Control**: Parameter instance #60 allows enabling/disabling the HTTP REST API (requires reboot, defaults to enabled)
 - See [Parameter Object Map Documentation](docs/PARAMETER_OBJECT_MAP.md) for complete parameter reference
 
 ### CIP Port Object (Class 0xF4)

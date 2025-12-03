@@ -27,6 +27,7 @@
 #include "freertos/task.h"
 #include "webui_api.h"
 #include "lwip/sockets.h"
+#include "system_config.h"
 #include <string.h>
 
 // Forward declarations for HTML content functions
@@ -254,6 +255,13 @@ static const httpd_uri_t favicon_uri = {
 
 bool webui_init(void)
 {
+    // Check if Web API is enabled via Parameter Object configuration
+    if (!system_webapi_enabled_load()) {
+        ESP_LOGW(TAG, "Web API is disabled via configuration - HTTP server will not start");
+        ESP_LOGW(TAG, "To enable: Set Parameter Object Instance 60 (Web API Enabled) to 1 via EtherNet/IP");
+        return false;
+    }
+
     if (server_handle != NULL) {
         ESP_LOGW(TAG, "Web UI server already initialized");
         return true;
