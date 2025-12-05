@@ -8,8 +8,20 @@
  *  @brief ESP32 Ethernet Media Counter Implementation
  *
  *  This module implements hardware-level media counter collection for the
- *  EtherNet/IP Ethernet Link object. It detects IP101 PHY and reads counters
- *  from both ESP32 EMAC registers and IP101 PHY MIB registers.
+ *  EtherNet/IP Ethernet Link object.
+ *
+ *  CURRENT IMPLEMENTATION (ESP-IDF v5.5.1):
+ *  - IP101 PHY counters: RX CRC errors, RX symbol errors (via MDIO)
+ *  - EMAC hardware counters: NOT AVAILABLE (API removed in ESP-IDF v5.x)
+ *
+ *  LIMITATIONS:
+ *  - Most MAC-level counters return zero (alignment errors, collisions, etc.)
+ *  - Only PHY-specific RX error counters are available
+ *
+ *  TO ENABLE FULL COUNTER SUPPORT:
+ *  - Request Espressif to add esp_eth_ioctl() commands for statistics
+ *    (e.g., ETH_CMD_G_STATISTICS, similar to ETH_MAC_ESP_CMD_PTP_ENABLE)
+ *  - See docs/ESPRESSIF_EMAC_INQUIRY.md for detailed technical inquiry
  */
 
 #include "eth_media_counters.h"
@@ -19,22 +31,31 @@
 #include <inttypes.h>
 #include <stdint.h>
 
-// ESP32-P4 EMAC register access
-// Based on ESP32-P4 TRM analysis, the EMAC does not expose hardware counter registers
-// like ESP32/ESP32-S2/ESP32-S3. The Register Summary shows DMA and MAC control registers
-// but no counter/statistics registers. ESP32-P4 uses a different EMAC IP core (likely
-// Synopsys DesignWare) that may not provide these counters at the register level.
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-// ESP32-P4: EMAC counter registers are not available
-// The TRM Register Summary (Section 50.7) does not list counter registers.
-// Only PHY counters (IP101) will be available for ESP32-P4.
+// ESP32 EMAC register access
+// 
+// ESP-IDF v5.5.1 Changes:
+// In ESP-IDF v5.x, the low-level EMAC register access headers (soc/emac_reg.h)
+// have been removed or refactored. Direct register access is no longer supported
+// via the public API for any ESP32 variant.
+//
+// Hardware counter support status by chip:
+// - ESP32-P4: Different EMAC IP core (likely Synopsys DesignWare), counters not
+//   exposed in TRM Section 50.7. Would require undocumented register access or
+//   esp_eth_ioctl() API extensions.
+// - ESP32/S2/S3: EMAC counters existed in hardware but are no longer accessible
+//   via public API in ESP-IDF v5.5.1+.
+//
+// Current approach: Rely on PHY counters (IP101) only for all targets.
+// Future: Request Espressif to add esp_eth_ioctl() commands for statistics access.
+//
 #define EMAC_REGISTERS_NOT_AVAILABLE
-#elif defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+
+// Legacy code for ESP-IDF < v5.0 (not used in v5.5.1)
+#if 0
+#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
 #include "soc/emac_reg.h"
 #include "soc/emac_struct.h"
-#else
-#warning "Unsupported ESP32 target for EMAC register access"
-#define EMAC_REGISTERS_NOT_AVAILABLE
+#endif
 #endif
 
 // IP101 PHY ID: OUI (0x0243) + Model (0x0C54)

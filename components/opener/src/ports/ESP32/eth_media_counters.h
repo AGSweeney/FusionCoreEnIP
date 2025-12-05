@@ -8,8 +8,15 @@
  *  @brief ESP32 Ethernet Media Counter Support
  *
  *  This module provides hardware-level media counter collection for the
- *  EtherNet/IP Ethernet Link object (Attribute #5). It supports IP101 PHY
- *  with automatic detection and graceful fallback for other PHY types.
+ *  EtherNet/IP Ethernet Link object (Attribute #5).
+ *
+ *  CURRENT STATUS (ESP-IDF v5.5.1):
+ *  - Supports IP101 PHY counter collection (RX errors only)
+ *  - EMAC hardware counters NOT available (API removed in ESP-IDF v5.x)
+ *  - Works on all ESP32 variants (ESP32, ESP32-S2, ESP32-S3, ESP32-P4)
+ *  - Most MAC-level counters return zero due to hardware access limitations
+ *
+ *  Supports automatic PHY detection with graceful fallback for non-IP101 PHYs.
  */
 
 #ifndef ETH_MEDIA_COUNTERS_H
