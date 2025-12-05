@@ -1,0 +1,35 @@
+-----------------------------------------
+--- EtherNet/IP & CIP Stack Detector ----
+-----------------------------------------
+------By Sharon Brizinov @ Claroty-------
+-----------------v0.8--------------------
+
+==============Device================
+[!] 172.16.82.99: ClearLink (vendor:424 type: 43, v2.93)
+====================================
+
+================Tests===============
+[ V ]: ENIP Register Session Number Sequential (Used value: 0x1)
+[ X ]: ENIP Register Session Number Sequential (Used value: 0x10)
+[ X ]: ENIP Register Session Number Sequential (Used value: 0x100)
+[ X ]: ENIP Register Session Number Sequential (Used value: 0x1000)
+[ X ]: ENIP Register Session Number Sequential (Used value: 0x10000)
+[ X ]: ENIP Can Register Session with Bad Options (Used value: 1)
+[ X ]: ENIP Can Register Session with Bad Length (Used value: 3)
+[ X ]: ENIP Is List Targets Supported
+[ V ]: ENIP List Services Protocol Version is 1
+[ V ]: ENIP List Services Name is "Communications \x00" (with space)
+[ X ]: ENIP List Services Name is "Communications\x00" (with single null (bug))
+[ X ]: ENIP List Services Name is "Communications\x00\x00" (with nulls)
+[ X ]: ENIP List Services Name is "COMMUNICATIONS\x00\x00" (upper with nulls)
+[ V ]: ENIP List Services Name Capability Flags Reserved Bit Are Empty
+[ V ]: CIP Forward Open is supported
+[ V ]: CIP Forward Open allows multiple requests for connection id 0
+[ V ]: CIP Forward Open is O2T Sequential by 1
+[ V ]: CIP Forward Open is T2O zero
+[ V ]: CIP Forward Open can open with bad connection flags
+====================================
+
+==============Results===============
+[!] EtherNet/IP & CIP Stack: RTAutomation (sig: '1000000011000111111')
+====================================
