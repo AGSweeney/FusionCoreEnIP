@@ -125,9 +125,9 @@ static void vl53l1x_update_task(void *pvParameters)
     (void)pvParameters;
     const TickType_t update_interval = pdMS_TO_TICKS(VL53L1X_UPDATE_INTERVAL_MS);
     uint32_t consecutive_errors = 0;
-    const uint32_t max_consecutive_errors = 5;  // Back off after 5 errors
-    const TickType_t error_backoff_delay = pdMS_TO_TICKS(100);  // Short backoff
-    const uint32_t max_total_errors_before_disable = 25;  // Disable after 25 consecutive errors (~0.5 second)
+    const uint32_t max_consecutive_errors = 3;  // Back off after 3 errors
+    const TickType_t error_backoff_delay = pdMS_TO_TICKS(200);  // Longer backoff
+    const uint32_t max_total_errors_before_disable = 10;  // Disable after 10 consecutive errors (~1 second max)
 
     ESP_LOGI(TAG, "VL53L1X update task started");
     
@@ -255,6 +255,11 @@ esp_err_t vl53l1x_manager_init(void)
 
     ESP_LOGI(TAG, "VL53L1X detected at address 0x%02X on %s bus", 
              VL53L1X_I2C_ADDRESS, (bus_num == I2C_BUS_PRIMARY_NUM) ? "primary" : "secondary");
+
+    // VL53L1X may still be in boot sequence even if it responds to I2C probe
+    // Give it additional time to fully initialize its internal state machine
+    ESP_LOGI(TAG, "Waiting for VL53L1X to complete internal boot sequence...");
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     s_config_mutex = xSemaphoreCreateMutex();
     if (s_config_mutex == NULL) {

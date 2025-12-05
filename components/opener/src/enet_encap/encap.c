@@ -437,6 +437,17 @@ void HandleReceivedRegisterSessionCommand(int socket, const EncapsulationData *c
   CipSessionHandle session_handle = 0;
   EncapsulationProtocolErrorCode encapsulation_protocol_status = kEncapsulationProtocolSuccess;
 
+  /* Validate data length - Register Session must have exactly 4 bytes (protocol version + options) */
+  const EipUint16 kRegisterSessionExpectedDataLength = 4;
+  if(receive_data->data_length != kRegisterSessionExpectedDataLength) {
+    OPENER_TRACE_WARN("Invalid Register Session data length: %u (expected %u)\n", 
+                      receive_data->data_length, kRegisterSessionExpectedDataLength);
+    EncapsulateRegisterSessionCommandResponseMessage(receive_data, 0, 
+                                                      kEncapsulationProtocolInvalidLength, 
+                                                      outgoing_message);
+    return;
+  }
+
   EipUint16 protocol_version = GetUintFromMessage((const EipUint8** const ) &receive_data->current_communication_buffer_position);
   EipUint16 option_flag = GetUintFromMessage((const EipUint8** const ) &receive_data->current_communication_buffer_position);
 

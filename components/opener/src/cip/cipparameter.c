@@ -123,6 +123,9 @@
 #define PARAM_ID_ASSEMBLY_100_SIZE    53
 #define PARAM_ID_ASSEMBLY_150_SIZE    54
 
+/* Security/Management Parameters (60-69) */
+#define PARAM_ID_WEBAPI_ENABLED       60
+
 /* Global pointer to Parameter Object class for instance creation */
 static CipClass *s_parameter_class = NULL;
 
@@ -161,12 +164,12 @@ static void InitializeCipParameter(CipClass *class) {
 /* Parameter Object initialization */
 EipStatus CipParameterInit(void) {
   /* Calculate number of instances we'll create
-   * We need to allocate enough instances to cover the highest instance ID we use (54)
-   * Active instances: 1-6, 9-19, 20-21, 22-37, 50-51, 53-54 (38 total)
-   * Unused instances: 7-8, 38-49, 52 (14 total)
+   * We need to allocate enough instances to cover the highest instance ID we use (60)
+   * Active instances: 1-6, 9-19, 20-21, 22-37, 50-51, 53-54, 60 (39 total)
+   * Unused instances: 7-8, 38-49, 52, 55-59 (20 total)
    * This creates some unused instances, but is necessary for non-sequential numbering
    */
-  const CipInstanceNum num_instances = 54; /* Highest instance ID is 54 (Assembly 150 Size) */
+  const CipInstanceNum num_instances = 60; /* Highest instance ID is 60 (Web API Enabled) */
 
   /* Create the Parameter Object class */
   s_parameter_class = CreateCipClass(
@@ -185,6 +188,12 @@ EipStatus CipParameterInit(void) {
 
   if (s_parameter_class == NULL) {
     OPENER_TRACE_ERR("Failed to create Parameter Object class\n");
+    return kEipStatusError;
+  }
+
+  /* Explicitly add instances 1-60 (CreateCipClass should do this, but make sure) */
+  if (AddCipInstances(s_parameter_class, num_instances) == NULL) {
+    OPENER_TRACE_ERR("Failed to add Parameter Object instances\n");
     return kEipStatusError;
   }
 
@@ -239,11 +248,14 @@ EipStatus CipParameterInit(void) {
   static CipBool dhcp_enabled = 0;
   /* Initialize from config_control: 0x02 = DHCP, 0x00 = Static */
   dhcp_enabled = (g_tcpip.config_control & 0x0F) == 0x02 ? 1 : 0;
+  static CipBool dhcp_min = false;
+  static CipBool dhcp_max = true;
+  static CipBool dhcp_default = true;
   CreateParameterInstance(s_parameter_class, PARAM_ID_DHCP_ENABLED,
     "DHCP Enabled", kCipBool,
     &dhcp_enabled,
     "", "Enable DHCP for automatic IP configuration (1=enabled, 0=static)",
-    NULL, NULL, NULL, kGetableSingleAndAll | kSetable);
+    &dhcp_min, &dhcp_max, &dhcp_default, kGetableSingleAndAll | kSetable);
 
   /* Parameter 7: Hostname */
   CreateParameterInstance(s_parameter_class, PARAM_ID_HOSTNAME,
@@ -270,11 +282,14 @@ EipStatus CipParameterInit(void) {
     &mcast_ttl_min, &mcast_ttl_max, &mcast_ttl_default, kGetableSingleAndAll | kSetable);
 
   /* Parameter 20: ACD Enable */
+  static CipBool acd_min = false;
+  static CipBool acd_max = true;
+  static CipBool acd_default = false;
   CreateParameterInstance(s_parameter_class, PARAM_ID_ACD_ENABLED,
     "ACD Enabled", kCipBool,
     &g_tcpip.select_acd,
     "", "Enable Address Conflict Detection (1=enabled, 0=disabled)",
-    NULL, NULL, NULL, kGetableSingleAndAll | kSetable);
+    &acd_min, &acd_max, &acd_default, kGetableSingleAndAll | kSetable);
 
   /* Parameter 21: ACD Timeout */
   static CipUint acd_timeout = 10;  /* Default: 10 seconds (RFC 5227 DEFEND_INTERVAL) */
@@ -291,13 +306,16 @@ EipStatus CipParameterInit(void) {
   /* Parameter 10: NAU7802 Enabled */
   static CipBool nau7802_enabled;
   nau7802_enabled = system_nau7802_enabled_load() ? 1 : 0;
+  static CipBool nau7802_enabled_min = false;
+  static CipBool nau7802_enabled_max = true;
+  static CipBool nau7802_enabled_default = true;
   static CipUsint nau7802_unit_min = 0;
   static CipUsint nau7802_unit_max = 2;
   CreateParameterInstance(s_parameter_class, PARAM_ID_NAU7802_ENABLED,
     "NAU7802 Enabled", kCipBool,
     &nau7802_enabled,
     "", "Enable/disable NAU7802 weight scale sensor",
-    NULL, NULL, NULL, kGetableSingleAndAll | kSetable);
+    &nau7802_enabled_min, &nau7802_enabled_max, &nau7802_enabled_default, kGetableSingleAndAll | kSetable);
   
   /* Parameter 11: NAU7802 Unit */
   static CipUsint nau7802_unit; /* 0=grams, 1=pounds, 2=kilograms */
@@ -375,11 +393,14 @@ EipStatus CipParameterInit(void) {
   /* Parameter 21: VL53L1X Enabled */
   static CipBool vl53l1x_enabled;
   vl53l1x_enabled = system_vl53l1x_enabled_load() ? 1 : 0;
+  static CipBool vl53l1x_enabled_min = false;
+  static CipBool vl53l1x_enabled_max = true;
+  static CipBool vl53l1x_enabled_default = true;
   CreateParameterInstance(s_parameter_class, PARAM_ID_VL53L1X_ENABLED,
     "VL53L1X Enabled", kCipBool,
     &vl53l1x_enabled,
     "", "Enable/disable VL53L1X time-of-flight sensor",
-    NULL, NULL, NULL, kGetableSingleAndAll | kSetable);
+    &vl53l1x_enabled_min, &vl53l1x_enabled_max, &vl53l1x_enabled_default, kGetableSingleAndAll | kSetable);
 
   /* Parameter 22: VL53L1X Distance Mode */
   static CipUint vl53l1x_distance_mode_min = 1;
@@ -568,7 +589,19 @@ EipStatus CipParameterInit(void) {
     "bytes", "Size of Output Assembly 150 in bytes",
     NULL, NULL, NULL, kGetableSingleAndAll);
 
-  OPENER_TRACE_INFO("Parameter Object initialized with %d instances (38 active)\n", num_instances);
+  /* Parameter 60: Web API Enabled */
+  static CipBool webapi_enabled_value;
+  webapi_enabled_value = system_webapi_enabled_load() ? true : false;  // Load from NVS
+  static CipBool webapi_min = false;
+  static CipBool webapi_max = true;
+  static CipBool webapi_default = true;
+  CreateParameterInstance(s_parameter_class, PARAM_ID_WEBAPI_ENABLED,
+    "Web API Enabled", kCipBool,
+    &webapi_enabled_value,
+    "", "Enable or disable HTTP REST API (requires reboot to take effect)",
+    &webapi_min, &webapi_max, &webapi_default, kSetAndGetAble);
+
+  OPENER_TRACE_INFO("Parameter Object initialized with %d instances (39 active)\n", num_instances);
 
   return kEipStatusOk;
 }
@@ -812,6 +845,13 @@ static EipStatus ParameterPostSetCallback(CipInstance *const instance,
     case PARAM_ID_DEFAULT_RPI: {
       /* RPI changes take effect on next connection */
       OPENER_TRACE_INFO("Default RPI changed (takes effect on next connection)\n");
+      break;
+    }
+
+    case PARAM_ID_WEBAPI_ENABLED: {
+      CipBool *enabled = (CipBool *)param->parameter_value;
+      system_webapi_enabled_save(*enabled ? true : false);
+      OPENER_TRACE_INFO("Web API enabled state saved to NVS (reboot required to take effect)\n");
       break;
     }
 

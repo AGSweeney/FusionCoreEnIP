@@ -53,6 +53,7 @@ static const char *NVS_KEY_VL53L1X_ENABLED = "vl53l1x_enabled";
 static const char *NVS_KEY_VL53L1X_CONFIG = "vl53l1x_cfg";
 static const char *NVS_KEY_LSM6DS3_ENABLED = "lsm6ds3_enabled";
 static const char *NVS_KEY_GP8403_DAC_ENABLED = "gp8403_enabled";
+static const char *NVS_KEY_WEBAPI_ENABLED = "webapi_enabled";
 
 void system_ip_config_get_defaults(system_ip_config_t *config)
 {
@@ -1658,6 +1659,61 @@ bool system_vl53l1x_config_save(const system_vl53l1x_config_t *config)
         return false;
     }
     
+    return true;
+}
+
+// Web API Enable/Disable Configuration
+bool system_webapi_enabled_load(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS for Web API enabled, using default (enabled)");
+        return true;  // Default: Web API enabled
+    }
+    
+    uint8_t enabled = 1;  // Default enabled
+    err = nvs_get_u8(handle, NVS_KEY_WEBAPI_ENABLED, &enabled);
+    nvs_close(handle);
+    
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "No saved Web API enabled setting, using default (enabled)");
+        return true;  // Default: enabled
+    }
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load Web API enabled: %s", esp_err_to_name(err));
+        return true;  // Default: enabled on error
+    }
+    
+    return (enabled != 0);
+}
+
+bool system_webapi_enabled_save(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for writing Web API enabled");
+        return false;
+    }
+    
+    err = nvs_set_u8(handle, NVS_KEY_WEBAPI_ENABLED, enabled ? 1 : 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set Web API enabled: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+    
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit Web API enabled: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Web API enabled setting saved: %s", enabled ? "enabled" : "disabled");
     return true;
 }
 

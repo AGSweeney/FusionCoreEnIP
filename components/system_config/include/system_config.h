@@ -330,6 +330,19 @@ bool system_gp8403_dac_enabled_load(void);
 bool system_gp8403_dac_enabled_save(bool enabled);
 
 /**
+ * @brief Load Web API enabled state from NVS
+ * @return true if Web API is enabled, false if disabled. Defaults to enabled if not set.
+ */
+bool system_webapi_enabled_load(void);
+
+/**
+ * @brief Save Web API enabled state to NVS
+ * @param enabled true to enable Web API, false to disable
+ * @return true on success, false on error
+ */
+bool system_webapi_enabled_save(bool enabled);
+
+/**
  * @brief VL53L1X configuration structure
  */
 typedef struct {

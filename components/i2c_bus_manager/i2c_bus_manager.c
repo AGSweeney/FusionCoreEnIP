@@ -4,6 +4,10 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/i2c_master.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_rom_sys.h"
 #include <string.h>
 
 static const char *TAG = "i2c_bus_manager";
@@ -112,11 +116,112 @@ static void scan_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name)
     ESP_LOGI(TAG, "%s scan complete: %d supported device(s) found", bus_name, found_count);
 }
 
+/**
+ * @brief Perform I2C bus recovery by cycling SCL to clear stuck devices
+ * 
+ * This function manually toggles the SCL line to allow devices that are
+ * stuck in a transaction to complete and release the bus. This is critical
+ * after software resets where I2C devices remain powered but the ESP32 resets.
+ * 
+ * @param sda_gpio SDA GPIO number
+ * @param scl_gpio SCL GPIO number
+ * @param bus_name Name for logging
+ */
+static void i2c_bus_recovery(int sda_gpio, int scl_gpio, const char* bus_name)
+{
+    ESP_LOGI(TAG, "Performing I2C bus recovery for %s bus (SDA: GPIO%d, SCL: GPIO%d)", 
+             bus_name, sda_gpio, scl_gpio);
+    
+    // Configure GPIO as open-drain outputs
+    gpio_config_t io_conf = {
+        .mode = GPIO_MODE_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    
+    // Reset and configure SCL
+    io_conf.pin_bit_mask = (1ULL << scl_gpio);
+    gpio_reset_pin(scl_gpio);
+    gpio_config(&io_conf);
+    
+    // Reset and configure SDA
+    io_conf.pin_bit_mask = (1ULL << sda_gpio);
+    gpio_reset_pin(sda_gpio);
+    gpio_config(&io_conf);
+    
+    // Set both lines high initially
+    gpio_set_level(scl_gpio, 1);
+    gpio_set_level(sda_gpio, 1);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    
+    // Check if SDA is stuck low (device holding bus)
+    int sda_level = gpio_get_level(sda_gpio);
+    if (sda_level == 0) {
+        ESP_LOGW(TAG, "%s bus: SDA stuck low, cycling SCL to recover", bus_name);
+        
+        // Send up to 9 clock pulses to allow device to complete transaction
+        for (int i = 0; i < 9; i++) {
+            gpio_set_level(scl_gpio, 0);
+            esp_rom_delay_us(5);  // 100kHz clock period
+            gpio_set_level(scl_gpio, 1);
+            esp_rom_delay_us(5);
+            
+            // Check if SDA is released
+            if (gpio_get_level(sda_gpio) == 1) {
+                ESP_LOGI(TAG, "%s bus: SDA released after %d clock pulses", bus_name, i + 1);
+                break;
+            }
+        }
+        
+        // Final check
+        if (gpio_get_level(sda_gpio) == 0) {
+            ESP_LOGW(TAG, "%s bus: SDA still stuck low after recovery attempt", bus_name);
+        }
+    }
+    
+    // Send STOP condition to reset any partial transactions
+    gpio_set_level(sda_gpio, 0);
+    esp_rom_delay_us(5);
+    gpio_set_level(scl_gpio, 1);
+    esp_rom_delay_us(5);
+    gpio_set_level(sda_gpio, 1);
+    esp_rom_delay_us(10);
+    
+    // If SDA is STILL stuck after recovery, it means devices are powered on
+    // but not yet ready (still booting). Log warning but continue - devices
+    // should stabilize shortly.
+    sda_level = gpio_get_level(sda_gpio);
+    if (sda_level == 0) {
+        ESP_LOGW(TAG, "%s bus: SDA still low after recovery - devices may still be booting", bus_name);
+        ESP_LOGW(TAG, "%s bus: This is normal after power-on, will retry during device init", bus_name);
+    } else {
+        ESP_LOGI(TAG, "%s bus: Recovery successful, bus is clean", bus_name);
+    }
+    
+    ESP_LOGI(TAG, "%s bus recovery complete", bus_name);
+}
+
 esp_err_t i2c_bus_manager_init(void)
 {
     esp_err_t ret;
 
     memset(&s_device_counts, 0, sizeof(s_device_counts));
+
+    ESP_LOGI(TAG, "Waiting for I2C devices to power up and stabilize...");
+    // CRITICAL: Wait for I2C devices to complete their own boot sequence
+    // VL53L1X takes up to 400ms to boot and holds SDA low during boot!
+    // LSM6DS3 takes ~50ms, NAU7802 takes ~20ms
+    // Must wait for slowest device before attempting bus operations
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // Perform bus recovery BEFORE initializing I2C driver
+    // This clears any stuck devices from interrupted transactions during software reset
+    i2c_bus_recovery(I2C_PRIMARY_SDA_GPIO, I2C_PRIMARY_SCL_GPIO, "Primary");
+    i2c_bus_recovery(I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, "Secondary");
+    
+    // Small delay to let devices stabilize after recovery
+    vTaskDelay(pdMS_TO_TICKS(10));
 
     bool primary_pullup = system_i2c_primary_pullup_load();
     bool secondary_pullup = system_i2c_secondary_pullup_load();
