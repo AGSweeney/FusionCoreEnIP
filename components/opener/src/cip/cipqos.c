@@ -152,21 +152,21 @@ EipStatus CipQoSInit() {
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.q_frames_enable,
-                  kNotSetOrGetable);
+                  kGetableSingle);
   InsertAttribute(instance,
                   2,
                   kCipUsint,
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.dscp.event,
-                  kNotSetOrGetable);
+                  kGetableSingle);
   InsertAttribute(instance,
                   3,
                   kCipUsint,
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.dscp.general,
-                  kNotSetOrGetable);
+                  kGetableSingle);
   InsertAttribute(instance,
                   4,
                   kCipUsint,
