@@ -21,6 +21,7 @@
  */
 
 #include "lldp_frame_builder.h"
+#include "cipidentity.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -33,7 +34,14 @@
 #define LLDP_TLV_SYSTEM_DESCRIPTION 6
 #define LLDP_TLV_SYSTEM_CAPABILITIES 7
 #define LLDP_TLV_MANAGEMENT_ADDRESS 8
+#define LLDP_TLV_ORGANIZATION_SPECIFIC 127
 #define LLDP_TLV_END_OF_LLDPDU     0
+
+// ODVA Organization-Specific TLV
+#define ODVA_OUI_BYTE_0  0x00
+#define ODVA_OUI_BYTE_1  0x1B
+#define ODVA_OUI_BYTE_2  0x1E
+#define CIP_IDENTIFICATION_SUBTYPE 0x0E
 
 // LLDP Chassis ID Subtypes
 #define LLDP_CHASSIS_ID_SUBTYPE_MAC_ADDRESS 4
@@ -315,6 +323,84 @@ static size_t lldp_build_management_address_tlv(uint8_t *buffer, size_t buffer_l
 }
 
 /**
+ * Build CIP Identification Organization-Specific TLV (Type 127)
+ * Organization-Specific TLV format:
+ *   - TLV Header (2 bytes): Type 127, Length = 16 (3 OUI + 1 subtype + 12 data)
+ *   - Organizationally Unique Identifier (OUI): 3 bytes (0x00 0x1B 0x1E for ODVA)
+ *   - Organization-Specific Subtype: 1 byte (0x0E for CIP Identification)
+ *   - Organization-Defined Information: 12 bytes (CIP Identity data)
+ *     - Vendor ID: 2 bytes (big-endian)
+ *     - Device Type: 2 bytes (big-endian)
+ *     - Product Code: 2 bytes (big-endian)
+ *     - Major Revision: 1 byte
+ *     - Minor Revision: 1 byte
+ *     - Serial Number: 4 bytes (big-endian)
+ * @param buffer Output buffer
+ * @param buffer_len Buffer size
+ * @param vendor_id Vendor ID (16-bit)
+ * @param device_type Device Type (16-bit)
+ * @param product_code Product Code (16-bit)
+ * @param major_revision Major Revision (8-bit)
+ * @param minor_revision Minor Revision (8-bit)
+ * @param serial_number Serial Number (32-bit)
+ * @return Number of bytes written, 0 on error
+ */
+static size_t lldp_build_cip_identification_tlv(uint8_t *buffer, size_t buffer_len,
+                                                 uint16_t vendor_id,
+                                                 uint16_t device_type,
+                                                 uint16_t product_code,
+                                                 uint8_t major_revision,
+                                                 uint8_t minor_revision,
+                                                 uint32_t serial_number) {
+    const size_t tlv_value_len = 3 + 1 + 12;  // OUI (3) + subtype (1) + data (12) = 16 bytes
+    const size_t total_tlv_len = 2 + tlv_value_len;  // Header (2) + value (16) = 18 bytes
+    
+    if (buffer == NULL || buffer_len < total_tlv_len) {
+        return 0;
+    }
+    
+    size_t offset = 0;
+    
+    // TLV Header: Type 127 (Organization-Specific), Length = 16
+    offset += lldp_encode_tlv_header(buffer + offset, LLDP_TLV_ORGANIZATION_SPECIFIC, tlv_value_len);
+    
+    // ODVA OUI: 0x00 0x1B 0x1E (IEEE 802.1AB-2009 standard byte order)
+    buffer[offset++] = ODVA_OUI_BYTE_0;
+    buffer[offset++] = ODVA_OUI_BYTE_1;
+    buffer[offset++] = ODVA_OUI_BYTE_2;
+    
+    // CIP Identification subtype: 0x0E
+    buffer[offset++] = CIP_IDENTIFICATION_SUBTYPE;
+    
+    // CIP Identity data (all big-endian):
+    // Vendor ID (2 bytes)
+    buffer[offset++] = (vendor_id >> 8) & 0xFF;
+    buffer[offset++] = vendor_id & 0xFF;
+    
+    // Device Type (2 bytes)
+    buffer[offset++] = (device_type >> 8) & 0xFF;
+    buffer[offset++] = device_type & 0xFF;
+    
+    // Product Code (2 bytes)
+    buffer[offset++] = (product_code >> 8) & 0xFF;
+    buffer[offset++] = product_code & 0xFF;
+    
+    // Major Revision (1 byte)
+    buffer[offset++] = major_revision;
+    
+    // Minor Revision (1 byte)
+    buffer[offset++] = minor_revision;
+    
+    // Serial Number (4 bytes, big-endian)
+    buffer[offset++] = (serial_number >> 24) & 0xFF;
+    buffer[offset++] = (serial_number >> 16) & 0xFF;
+    buffer[offset++] = (serial_number >> 8) & 0xFF;
+    buffer[offset++] = serial_number & 0xFF;
+    
+    return offset;
+}
+
+/**
  * Build complete Ethernet frame for LLDP
  * @param buffer Output buffer (must be at least ETH_HEADER_SIZE + lldpdu_len bytes)
  * @param buffer_len Total buffer size
@@ -470,6 +556,21 @@ size_t lldp_build_lldpdu(uint8_t *buffer, size_t buffer_len,
         }
         // Continue even if this optional TLV fails (non-fatal)
     }
+    
+    // CIP Identification Organization-Specific TLV (optional, Type 127)
+    // Include CIP Identity from global g_identity object (declared in cipidentity.h)
+    written = lldp_build_cip_identification_tlv(buffer + offset, remaining,
+                                                g_identity.vendor_id,
+                                                g_identity.device_type,
+                                                g_identity.product_code,
+                                                g_identity.revision.major_revision,
+                                                g_identity.revision.minor_revision,
+                                                g_identity.serial_number);
+    if (written > 0) {
+        offset += written;
+        remaining -= written;
+    }
+    // Continue even if this optional TLV fails (non-fatal)
     
     // End of LLDPDU TLV (mandatory - must be last)
     written = lldp_build_end_tlv(buffer + offset, remaining);

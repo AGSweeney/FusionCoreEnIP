@@ -214,3 +214,37 @@ size_t lldp_decode_management_address_tlv(const uint8_t *buffer, size_t length, 
     return length;
 }
 
+/**
+ * Decode CIP Identification TLV (organization-specific TLV, subtype 0x0E)
+ * Format: Vendor ID (2 bytes), Device Type (2 bytes), Product Code (2 bytes),
+ *         Major Revision (1 byte), Minor Revision (1 byte), Serial Number (4 bytes)
+ * All values are in big-endian format
+ */
+size_t lldp_decode_cip_identification_tlv(const uint8_t *buffer, size_t length,
+                                          uint16_t *vendor_id,
+                                          uint16_t *device_type,
+                                          uint16_t *product_code,
+                                          uint8_t *major_revision,
+                                          uint8_t *minor_revision,
+                                          uint32_t *serial_number) {
+    if (buffer == NULL || length < 12) {
+        return 0;  // CIP Identification requires 12 bytes
+    }
+    
+    if (vendor_id == NULL || device_type == NULL || product_code == NULL ||
+        major_revision == NULL || minor_revision == NULL || serial_number == NULL) {
+        return 0;
+    }
+    
+    // All values are big-endian
+    *vendor_id = ((uint16_t)buffer[0] << 8) | buffer[1];
+    *device_type = ((uint16_t)buffer[2] << 8) | buffer[3];
+    *product_code = ((uint16_t)buffer[4] << 8) | buffer[5];
+    *major_revision = buffer[6];
+    *minor_revision = buffer[7];
+    *serial_number = ((uint32_t)buffer[8] << 24) | ((uint32_t)buffer[9] << 16) |
+                     ((uint32_t)buffer[10] << 8) | buffer[11];
+    
+    return 12;
+}
+

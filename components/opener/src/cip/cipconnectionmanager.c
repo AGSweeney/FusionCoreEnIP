@@ -1105,6 +1105,9 @@ EipStatus ManageConnections(MilliSeconds elapsed_time) {
   while(NULL != node) {
     //OPENER_TRACE_INFO("Entering Connection Object loop\n");
     CipConnectionObject *connection_object = node->data;
+    
+    DoublyLinkedListNode *next_node = node->next;
+    
     if(kConnectionObjectStateEstablished ==
        ConnectionObjectGetState(connection_object) ) {
       if( (NULL != connection_object->consuming_instance) || /* we have a consuming connection check inactivity watchdog timer */
@@ -1119,15 +1122,23 @@ EipStatus ManageConnections(MilliSeconds elapsed_time) {
           OPENER_ASSERT(NULL != connection_object->connection_timeout_function);
           connection_object->connection_timeout_function(connection_object);
         } else {
-          connection_object->inactivity_watchdog_timer -= elapsed_time;
-          connection_object->last_package_watchdog_timer -= elapsed_time;
+          if(elapsed_time <= connection_object->inactivity_watchdog_timer) {
+            connection_object->inactivity_watchdog_timer -= elapsed_time;
+          } else {
+            connection_object->inactivity_watchdog_timer = 0;
+          }
+          if(elapsed_time <= connection_object->last_package_watchdog_timer) {
+            connection_object->last_package_watchdog_timer -= elapsed_time;
+          } else {
+            connection_object->last_package_watchdog_timer = 0;
+          }
         }
       }
       /* only if the connection has not timed out check if data is to be send */
       if(kConnectionObjectStateEstablished ==
          ConnectionObjectGetState(connection_object) ) {
         /* client connection */
-        if( (0 != ConnectionObjectGetExpectedPacketRate(connection_object) )
+          if( (0 != ConnectionObjectGetExpectedPacketRate(connection_object) )
             && (kEipInvalidSocket !=
                 connection_object->socket[kUdpCommuncationDirectionProducing]) ) /* only produce for the master connection */
         {
@@ -1136,9 +1147,9 @@ EipStatus ManageConnections(MilliSeconds elapsed_time) {
                connection_object) ) {
             /* non cyclic connections have to decrement production inhibit timer */
             if(elapsed_time <= connection_object->production_inhibit_timer) {
-              //The connection is allowed to send again
-            } else {
               connection_object->production_inhibit_timer -= elapsed_time;
+            } else {
+              connection_object->production_inhibit_timer = 0;
             }
           }
 
@@ -1170,12 +1181,16 @@ EipStatus ManageConnections(MilliSeconds elapsed_time) {
               ConnectionObjectResetProductionInhibitTimer(connection_object);
             }
           } else {
-            connection_object->transmission_trigger_timer -= elapsed_time;
+            if(elapsed_time <= connection_object->transmission_trigger_timer) {
+              connection_object->transmission_trigger_timer -= elapsed_time;
+            } else {
+              connection_object->transmission_trigger_timer = 0;
+            }
           }
         }
       }
     }
-    node = node->next;
+    node = next_node;
   }
   return kEipStatusOk;
 }

@@ -39,6 +39,7 @@ static const char *NVS_KEY_MCP_UPDATE_RATE_MS = "mcp_upd_rate";  // Update rate 
 static const char *NVS_KEY_I2C_INTERNAL_PULLUP = "i2c_pullup";
 static const char *NVS_KEY_I2C_PRIMARY_PULLUP = "i2c_pullup_prim";
 static const char *NVS_KEY_I2C_SECONDARY_PULLUP = "i2c_pullup_sec";
+static const char *NVS_KEY_I2C_SECONDARY_ENABLED = "i2c_sec_enabled";
 static const char *NVS_KEY_NAU7802_ENABLED = "nau7802_enabled";
 static const char *NVS_KEY_NAU7802_BYTE_OFFSET = "nau7802_off";
 static const char *NVS_KEY_NAU7802_CAL_FACTOR = "nau7802_cal";
@@ -695,6 +696,63 @@ bool system_i2c_secondary_pullup_load(void)
     }
     
     return enabled != 0;
+}
+
+bool system_i2c_secondary_bus_enabled_load(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            return false;
+        }
+        ESP_LOGE(TAG, "Failed to open NVS namespace: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    uint8_t enabled = 0;
+    size_t required_size = sizeof(uint8_t);
+    err = nvs_get_blob(handle, NVS_KEY_I2C_SECONDARY_ENABLED, &enabled, &required_size);
+    nvs_close(handle);
+    
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return false;
+    }
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load secondary I2C bus enabled setting: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    return enabled != 0;
+}
+
+bool system_i2c_secondary_bus_enabled_save(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    uint8_t value = enabled ? 1 : 0;
+    err = nvs_set_blob(handle, NVS_KEY_I2C_SECONDARY_ENABLED, &value, sizeof(uint8_t));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save secondary I2C bus enabled setting: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+    
+    err = nvs_commit(handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit NVS changes: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return false;
+    }
+    
+    nvs_close(handle);
+    return true;
 }
 
 bool system_i2c_secondary_pullup_save(bool enabled)

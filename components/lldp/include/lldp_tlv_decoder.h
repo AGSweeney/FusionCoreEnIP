@@ -135,5 +135,25 @@ size_t lldp_decode_system_capabilities_tlv(const uint8_t *buffer, size_t length,
  */
 size_t lldp_decode_management_address_tlv(const uint8_t *buffer, size_t length, uint8_t ip_address[4]);
 
+/**
+ * Decode CIP Identification TLV (organization-specific TLV, subtype 0x0E)
+ * @param buffer Input buffer pointing to TLV value (after organization code and subtype)
+ * @param length Length of TLV value (should be 12 bytes for CIP Identification)
+ * @param vendor_id Output vendor ID
+ * @param device_type Output device type
+ * @param product_code Output product code
+ * @param major_revision Output major revision
+ * @param minor_revision Output minor revision
+ * @param serial_number Output serial number
+ * @return Number of bytes consumed (12 on success, 0 on error)
+ */
+size_t lldp_decode_cip_identification_tlv(const uint8_t *buffer, size_t length,
+                                          uint16_t *vendor_id,
+                                          uint16_t *device_type,
+                                          uint16_t *product_code,
+                                          uint8_t *major_revision,
+                                          uint8_t *minor_revision,
+                                          uint32_t *serial_number);
+
 #endif /* LLDP_TLV_DECODER_H_ */
 

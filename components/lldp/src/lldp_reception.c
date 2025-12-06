@@ -86,6 +86,14 @@ int lldp_reception_process_frame(const uint8_t *frame, size_t frame_len) {
     uint8_t management_ip[4] = {0};
     bool has_management_ip = false;
     
+    uint16_t cip_vendor_id = 0;
+    uint16_t cip_device_type = 0;
+    uint16_t cip_product_code = 0;
+    uint8_t cip_major_revision = 0;
+    uint8_t cip_minor_revision = 0;
+    uint32_t cip_serial_number = 0;
+    bool has_cip_identification = false;
+    
     // Decode TLVs until End TLV
     while (offset < lldpdu_len) {
         if (offset + 2 > lldpdu_len) {
@@ -148,6 +156,36 @@ int lldp_reception_process_frame(const uint8_t *frame, size_t frame_len) {
                 }
                 break;
             }
+            case 127: {  // Organization-Specific TLV
+                // Check for ODVA OUI (0x001B1E) and CIP Identification subtype (0x0E)
+                if (header.length >= 4) {  // Minimum: 3 bytes OUI + 1 byte subtype
+                    const uint8_t *tlv_data = lldpdu + offset;
+                    // ODVA OUI: 0x00 0x1B 0x1E (IEEE 802.1AB-2009 standard byte order)
+                    if (tlv_data[0] == 0x00 && tlv_data[1] == 0x1B && tlv_data[2] == 0x1E) {
+                        // ODVA OUI found - check for CIP Identification subtype (0x0E)
+                        uint8_t subtype = tlv_data[3];
+                        OPENER_TRACE_INFO("LLDP: Found ODVA organization-specific TLV (subtype: 0x%02X, length: %u)\n",
+                                         subtype, header.length);
+                        
+                        if (subtype == 0x0E && header.length >= 16) {  // 3 OUI + 1 subtype + 12 data
+                            if (lldp_decode_cip_identification_tlv(tlv_data + 4, header.length - 4,
+                                                                    &cip_vendor_id, &cip_device_type, &cip_product_code,
+                                                                    &cip_major_revision, &cip_minor_revision,
+                                                                    &cip_serial_number) > 0) {
+                                has_cip_identification = true;
+                                OPENER_TRACE_INFO("LLDP: Successfully decoded CIP Identification - Vendor: 0x%04X, Type: 0x%04X, Product: 0x%04X, Rev: %u.%u, Serial: %lu\n",
+                                                 cip_vendor_id, cip_device_type, cip_product_code,
+                                                 cip_major_revision, cip_minor_revision, (unsigned long)cip_serial_number);
+                            } else {
+                                OPENER_TRACE_WARN("LLDP: Failed to decode CIP Identification TLV (value length: %u, expected >= 12)\n", header.length - 4);
+                            }
+                        } else if (subtype == 0x0E) {
+                            OPENER_TRACE_WARN("LLDP: CIP Identification TLV too short (length: %u, expected >= 16)\n", header.length);
+                        }
+                    }
+                }
+                break;
+            }
             default:
                 // Unknown TLV - skip it
                 break;
@@ -190,6 +228,13 @@ int lldp_reception_process_frame(const uint8_t *frame, size_t frame_len) {
     }
     if (has_management_ip) {
         lldp_neighbor_db_update_management_ip(entry, management_ip);
+    }
+    if (has_cip_identification) {
+        lldp_neighbor_db_update_cip_identification(entry, cip_vendor_id, cip_device_type,
+                                                   cip_product_code, cip_major_revision,
+                                                   cip_minor_revision, cip_serial_number);
+        OPENER_TRACE_INFO("LLDP: Updated neighbor entry with CIP Identification - Vendor: 0x%04X, Type: 0x%04X, Product: 0x%04X\n",
+                         cip_vendor_id, cip_device_type, cip_product_code);
     }
     
     // Update CIP object instance with new data

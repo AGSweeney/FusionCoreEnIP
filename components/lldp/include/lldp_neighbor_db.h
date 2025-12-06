@@ -77,6 +77,15 @@ typedef struct lldp_neighbor_entry {
     uint8_t management_ip[4];  // IPv4 address (network byte order)
     bool has_management_ip;
     
+    // CIP Identification (from organization-specific TLV)
+    uint16_t cip_vendor_id;
+    uint16_t cip_device_type;
+    uint16_t cip_product_code;
+    uint8_t cip_major_revision;
+    uint8_t cip_minor_revision;
+    uint32_t cip_serial_number;
+    bool has_cip_identification;
+    
     // Metadata
     uint8_t source_mac[6];  // MAC address of the neighbor device
     uint32_t last_update;   // Timestamp when entry was last updated
@@ -163,6 +172,13 @@ void lldp_neighbor_db_update_system_capabilities(lldp_neighbor_entry_t *entry,
                                                  uint16_t system_capabilities, 
                                                  uint16_t enabled_capabilities);
 void lldp_neighbor_db_update_management_ip(lldp_neighbor_entry_t *entry, const uint8_t ip[4]);
+void lldp_neighbor_db_update_cip_identification(lldp_neighbor_entry_t *entry,
+                                               uint16_t vendor_id,
+                                               uint16_t device_type,
+                                               uint16_t product_code,
+                                               uint8_t major_revision,
+                                               uint8_t minor_revision,
+                                               uint32_t serial_number);
 
 /**
  * Get current timestamp in seconds (since boot)

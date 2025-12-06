@@ -161,6 +161,20 @@ bool system_i2c_secondary_pullup_load(void);
 bool system_i2c_secondary_pullup_save(bool enabled);
 
 /**
+ * @brief Load secondary I2C bus enabled state from NVS
+ * @return true if secondary I2C bus is enabled, false if disabled. Defaults to disabled (false) if not set.
+ */
+bool system_i2c_secondary_bus_enabled_load(void);
+
+/**
+ * @brief Save secondary I2C bus enabled state to NVS
+ * @param enabled true to enable secondary I2C bus, false to disable
+ * @return true on success, false on error
+ * @note Changes take effect on next boot (I2C buses are initialized at boot time)
+ */
+bool system_i2c_secondary_bus_enabled_save(bool enabled);
+
+/**
  * @brief Load NAU7802 enabled state from NVS
  * @return true if NAU7802 is enabled, false if disabled or not set
  */

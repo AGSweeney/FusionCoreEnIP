@@ -73,10 +73,13 @@ static void scan_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name)
 
     ESP_LOGI(TAG, "Scanning %s I2C bus...", bus_name);
     int found_count = 0;
+    int timeout_count = 0;
+    const int max_consecutive_timeouts = 5;
 
     for (uint8_t addr = 0x08; addr < 0x78; addr++) {
         esp_err_t ret = i2c_master_probe(bus_handle, addr, 100);
         if (ret == ESP_OK) {
+            timeout_count = 0;
             i2c_device_type_t type = identify_device_type(addr);
             const char* type_str = device_type_to_string(type);
 
@@ -110,6 +113,24 @@ static void scan_bus(i2c_master_bus_handle_t bus_handle, const char* bus_name)
             } else {
                 ESP_LOGI(TAG, "  Found device at 0x%02X: Unknown device", addr);
             }
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            timeout_count++;
+            ESP_LOGD(TAG, "%s bus: Probe timeout at address 0x%02X (consecutive timeouts: %d)", bus_name, addr, timeout_count);
+            
+            esp_err_t reset_ret = i2c_master_bus_reset(bus_handle);
+            if (reset_ret != ESP_OK) {
+                ESP_LOGW(TAG, "%s bus: Failed to reset bus after timeout: %s", bus_name, esp_err_to_name(reset_ret));
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+            
+            if (timeout_count >= max_consecutive_timeouts) {
+                ESP_LOGW(TAG, "%s bus: Multiple consecutive probe timeouts detected", bus_name);
+                ESP_LOGW(TAG, "%s bus: This likely indicates no devices are connected or pull-ups are missing", bus_name);
+                ESP_LOGW(TAG, "%s bus: Skipping remaining addresses", bus_name);
+                break;
+            }
+        } else {
+            timeout_count = 0;
         }
     }
 
@@ -215,10 +236,16 @@ esp_err_t i2c_bus_manager_init(void)
     // Must wait for slowest device before attempting bus operations
     vTaskDelay(pdMS_TO_TICKS(500));
     
+    // Check if secondary bus is enabled before doing any initialization
+    bool secondary_bus_enabled = system_i2c_secondary_bus_enabled_load();
+    
     // Perform bus recovery BEFORE initializing I2C driver
     // This clears any stuck devices from interrupted transactions during software reset
     i2c_bus_recovery(I2C_PRIMARY_SDA_GPIO, I2C_PRIMARY_SCL_GPIO, "Primary");
-    i2c_bus_recovery(I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, "Secondary");
+    
+    if (secondary_bus_enabled) {
+        i2c_bus_recovery(I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, "Secondary");
+    }
     
     // Small delay to let devices stabilize after recovery
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -244,28 +271,35 @@ esp_err_t i2c_bus_manager_init(void)
     }
     ESP_LOGI(TAG, "Primary I2C bus initialized (SDA: GPIO%d, SCL: GPIO%d, pullup: %s)", 
              I2C_PRIMARY_SDA_GPIO, I2C_PRIMARY_SCL_GPIO, primary_pullup ? "enabled" : "disabled");
+    if (secondary_bus_enabled) {
+        i2c_master_bus_config_t secondary_bus_config = {
+            .i2c_port = I2C_BUS_SECONDARY_NUM,
+            .sda_io_num = I2C_SECONDARY_SDA_GPIO,
+            .scl_io_num = I2C_SECONDARY_SCL_GPIO,
+            .clk_source = I2C_CLK_SRC_DEFAULT,
+            .glitch_ignore_cnt = 7,
+            .flags = {
+                .enable_internal_pullup = secondary_pullup,
+            },
+        };
 
-    i2c_master_bus_config_t secondary_bus_config = {
-        .i2c_port = I2C_BUS_SECONDARY_NUM,
-        .sda_io_num = I2C_SECONDARY_SDA_GPIO,
-        .scl_io_num = I2C_SECONDARY_SCL_GPIO,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags = {
-            .enable_internal_pullup = secondary_pullup,
-        },
-    };
-
-    ret = i2c_new_master_bus(&secondary_bus_config, &s_secondary_bus);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize secondary I2C bus: %s", esp_err_to_name(ret));
-        return ret;
+        ret = i2c_new_master_bus(&secondary_bus_config, &s_secondary_bus);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize secondary I2C bus: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        ESP_LOGI(TAG, "Secondary I2C bus initialized (SDA: GPIO%d, SCL: GPIO%d, pullup: %s)", 
+                 I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, secondary_pullup ? "enabled" : "disabled");
+    } else {
+        ESP_LOGI(TAG, "Secondary I2C bus is disabled in configuration (SDA: GPIO%d, SCL: GPIO%d)", 
+                 I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO);
+        s_secondary_bus = NULL;
     }
-    ESP_LOGI(TAG, "Secondary I2C bus initialized (SDA: GPIO%d, SCL: GPIO%d, pullup: %s)", 
-             I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, secondary_pullup ? "enabled" : "disabled");
 
     scan_bus(s_primary_bus, "Primary");
-    scan_bus(s_secondary_bus, "Secondary");
+    if (s_secondary_bus != NULL) {
+        scan_bus(s_secondary_bus, "Secondary");
+    }
 
     ESP_LOGI(TAG, "Device counts - VL53L1X: %d, LSM6DS3: %d, NAU7802: %d, MCP230XX: %d, GP8403: %d",
              s_device_counts.vl53l1x_count,

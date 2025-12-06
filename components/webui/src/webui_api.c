@@ -70,6 +70,8 @@ static bool s_cached_i2c_primary_pullup = false;
 static bool s_i2c_primary_pullup_cached = false;
 static bool s_cached_i2c_secondary_pullup = false;
 static bool s_i2c_secondary_pullup_cached = false;
+static bool s_cached_i2c_secondary_bus_enabled = false;
+static bool s_i2c_secondary_bus_enabled_cached = false;
 
 // Cache for device enabled states to avoid frequent NVS reads
 static bool s_cached_vl53l1x_enabled = false;
@@ -1235,6 +1237,66 @@ static esp_err_t api_post_i2c_secondary_pullup_handler(httpd_req_t *req)
     cJSON_AddStringToObject(response, "status", "ok");
     cJSON_AddBoolToObject(response, "enabled", enabled);
     cJSON_AddStringToObject(response, "message", "Secondary I2C pull-up setting saved. Restart required for changes to take effect.");
+    
+    return send_json_response(req, response, ESP_OK);
+}
+
+// GET /api/i2c/secondary/enabled - Get secondary I2C bus enabled state
+static esp_err_t api_get_i2c_secondary_enabled_handler(httpd_req_t *req)
+{
+    if (!s_i2c_secondary_bus_enabled_cached) {
+        s_cached_i2c_secondary_bus_enabled = system_i2c_secondary_bus_enabled_load();
+        s_i2c_secondary_bus_enabled_cached = true;
+    }
+    
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(json, "enabled", s_cached_i2c_secondary_bus_enabled);
+    cJSON_AddStringToObject(json, "bus", "secondary");
+    cJSON_AddNumberToObject(json, "sda_gpio", 33);
+    cJSON_AddNumberToObject(json, "scl_gpio", 32);
+    
+    return send_json_response(req, json, ESP_OK);
+}
+
+// POST /api/i2c/secondary/enabled - Set secondary I2C bus enabled state
+static esp_err_t api_post_i2c_secondary_enabled_handler(httpd_req_t *req)
+{
+    char content[128];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+    
+    cJSON *json = cJSON_Parse(content);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *item = cJSON_GetObjectItem(json, "enabled");
+    if (item == NULL || !cJSON_IsBool(item)) {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid 'enabled' field");
+        return ESP_FAIL;
+    }
+    
+    bool enabled = cJSON_IsTrue(item);
+    cJSON_Delete(json);
+    
+    if (!system_i2c_secondary_bus_enabled_save(enabled)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save secondary I2C bus enabled setting");
+        return ESP_FAIL;
+    }
+    
+    s_cached_i2c_secondary_bus_enabled = enabled;
+    s_i2c_secondary_bus_enabled_cached = true;
+    
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "status", "ok");
+    cJSON_AddBoolToObject(response, "enabled", enabled);
+    cJSON_AddStringToObject(response, "message", "Secondary I2C bus setting saved. Restart required for changes to take effect.");
     
     return send_json_response(req, response, ESP_OK);
 }
@@ -2965,6 +3027,24 @@ void webui_register_api_handlers(httpd_handle_t server)
         .user_ctx  = NULL
     };
     httpd_register_uri_handler(server, &post_i2c_secondary_pullup_uri);
+    
+    // GET /api/i2c/secondary/enabled
+    httpd_uri_t get_i2c_secondary_enabled_uri = {
+        .uri       = "/api/i2c/secondary/enabled",
+        .method    = HTTP_GET,
+        .handler   = api_get_i2c_secondary_enabled_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &get_i2c_secondary_enabled_uri);
+    
+    // POST /api/i2c/secondary/enabled
+    httpd_uri_t post_i2c_secondary_enabled_uri = {
+        .uri       = "/api/i2c/secondary/enabled",
+        .method    = HTTP_POST,
+        .handler   = api_post_i2c_secondary_enabled_handler,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(server, &post_i2c_secondary_enabled_uri);
     
     // GET /api/logs - Get system logs
     httpd_uri_t get_logs_uri = {

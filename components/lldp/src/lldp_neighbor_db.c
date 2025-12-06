@@ -384,6 +384,31 @@ void lldp_neighbor_db_update_management_ip(lldp_neighbor_entry_t *entry, const u
     entry->has_management_ip = true;
 }
 
+void lldp_neighbor_db_update_cip_identification(lldp_neighbor_entry_t *entry,
+                                               uint16_t vendor_id,
+                                               uint16_t device_type,
+                                               uint16_t product_code,
+                                               uint8_t major_revision,
+                                               uint8_t minor_revision,
+                                               uint32_t serial_number) {
+    if (entry == NULL) {
+        return;
+    }
+    
+    // Verify entry is still valid (not freed)
+    if (!entry->valid) {
+        return;
+    }
+    
+    entry->cip_vendor_id = vendor_id;
+    entry->cip_device_type = device_type;
+    entry->cip_product_code = product_code;
+    entry->cip_major_revision = major_revision;
+    entry->cip_minor_revision = minor_revision;
+    entry->cip_serial_number = serial_number;
+    entry->has_cip_identification = true;
+}
+
 /**
  * Get current timestamp in seconds
  */

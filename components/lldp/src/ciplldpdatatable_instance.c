@@ -25,6 +25,7 @@
 #include "opener_api.h"
 #include "cipcommon.h"
 #include "ciperror.h"
+#include "cipidentity.h"
 #include "trace.h"
 #include "cpf.h"
 #include <string.h>
@@ -111,8 +112,18 @@ static void NeighborEntryToCipValues(const lldp_neighbor_entry_t *neighbor,
         values->ipv4_management_addresses.management_addresses = NULL;
     }
     
-    // Attribute 7: CIP Identification (not available from LLDP, set to zero)
-    memset(&values->cip_identification, 0, sizeof(CipLldpDataTableCipIdentification));
+    // Attribute 7: CIP Identification - populate if neighbor provided it in LLDP frame
+    if (neighbor->has_cip_identification) {
+        values->cip_identification.vendor_id = neighbor->cip_vendor_id;
+        values->cip_identification.device_type = neighbor->cip_device_type;
+        values->cip_identification.product_code = neighbor->cip_product_code;
+        values->cip_identification.major_revision = neighbor->cip_major_revision;
+        values->cip_identification.minor_revision = neighbor->cip_minor_revision;
+        values->cip_identification.cip_serial_number = neighbor->cip_serial_number;
+    } else {
+        // Neighbor did not provide CIP Identification - set to zeros
+        memset(&values->cip_identification, 0, sizeof(CipLldpDataTableCipIdentification));
+    }
     
     // Attribute 8: Additional Ethernet Capabilities (set to zero)
     memset(&values->additional_ethernet_capabilities, 0, sizeof(CipLldpDataTableAdditionalEthernetCapabilities));
