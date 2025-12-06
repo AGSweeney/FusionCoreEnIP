@@ -70,7 +70,8 @@ CipPortObject g_port[PORT_INSTANCE_COUNT] = {
       2,                                          /* PathSize in 16-bit chunks */
       kCipTcpIpInterfaceClassCode,                 /* Class ID (0xF5) */
       1,                                          /* Instance Number #1 */
-      0                                           /* Attribute Number (not used) */
+      0,                                          /* Attribute Number (not used) */
+      0                                           /* Member ID (not used for this path) */
     },
     .port_name = {0, NULL},                       /* Attribute #4: Will be set in init */
     .port_type_name = {0, NULL},                 /* Attribute #5: Will be set in init */

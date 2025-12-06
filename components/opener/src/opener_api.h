@@ -928,6 +928,18 @@ EipStatus ResetDevice(void);
 EipStatus ResetDeviceToInitialConfiguration(void);
 
 /** @ingroup CIP_CALLBACK_API
+ * @brief Flash the device LED for a specified duration
+ *
+ * This function is called by the Flash LED service (0x4B) to provide visual
+ * identification of the device. The LED should flash for the specified duration.
+ *
+ * @param duration_seconds Duration in seconds (0-255). If 0, flash indefinitely
+ *     until stopped or device reset. If > 0, flash for the specified duration.
+ * @return kEipStatusOk if successful, kEipStatusError if LED control is not available
+ */
+EipStatus FlashLED(EipUint8 duration_seconds);
+
+/** @ingroup CIP_CALLBACK_API
  * @brief Allocate memory for the CIP stack
  *
  * emulate the common c-library function calloc

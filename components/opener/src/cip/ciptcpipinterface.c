@@ -62,14 +62,16 @@ CipTcpIpObject g_tcpip =
     2,  /* PathSize in 16 Bit chunks */
     CIP_ETHERNETLINK_CLASS_CODE,  /* Class Code */
     OPENER_ETHLINK_INSTANCE_CNT,  /* Instance # */
-    0   /* Attribute # (not used as this is the EPATH to the EthernetLink object)*/
+    0,  /* Attribute # (not used as this is the EPATH to the EthernetLink object) */
+    0   /* Member ID (not used for this path) */
   },
 #else
   .physical_link_object = {     /* attribute #4 physical link object */
     0,  /* PathSize in 16 Bit chunks */
     0,  /* Class Code */
     0,  /* Instance # */
-    0   /* Attribute # */
+    0,  /* Attribute # */
+    0   /* Member ID */
   },
 #endif  /* #if OPENER_ETHLINK_INSTANCE_CNT != 2 */
   .interface_configuration = { /* attribute #5 interface_configuration */

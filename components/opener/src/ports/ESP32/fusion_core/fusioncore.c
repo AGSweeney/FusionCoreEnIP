@@ -19,6 +19,7 @@
 #include "typedefs.h"
 #include "driver/gpio.h"
 #include "esp_system.h"
+#include "esp_err.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "nvtcpip.h"
@@ -43,10 +44,18 @@ EipUint8 g_assembly_data064[72];
 EipUint8 g_assembly_data096[40];
 EipUint8 g_assembly_data097[10];
 
-static const gpio_num_t kStatusLedGpio = GPIO_NUM_33;
+static const gpio_num_t kFlashLedGpio = GPIO_NUM_23;
 static bool restart_pending = false;
 static EipUint32 s_active_io_connections = 0;
 static bool s_io_activity_seen = false;
+
+/** @brief Flash LED task parameters */
+static struct {
+  TaskHandle_t task_handle;
+  SemaphoreHandle_t task_semaphore;
+  uint8_t duration_seconds;
+  bool flash_active;
+} s_flash_led_state = { NULL, NULL, 0, false };
 
 /* Mutexes for thread-safe access */
 static SemaphoreHandle_t s_assembly_mutex = NULL;  // Protects assembly data arrays
@@ -161,14 +170,19 @@ static void RestoreTcpIpDefaults(void) {
 
 static void ConfigureStatusLed(void) {
   gpio_config_t led_config = {
-    .pin_bit_mask = 1ULL << kStatusLedGpio,
+    .pin_bit_mask = 1ULL << kFlashLedGpio,
     .mode = GPIO_MODE_OUTPUT,
     .pull_up_en = GPIO_PULLUP_DISABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
     .intr_type = GPIO_INTR_DISABLE
   };
-  gpio_config(&led_config);
-  gpio_set_level(kStatusLedGpio, 0);
+  esp_err_t ret = gpio_config(&led_config);
+  if (ret != ESP_OK) {
+    OPENER_TRACE_ERR("Failed to configure flash LED GPIO %d: %s\n", kFlashLedGpio, esp_err_to_name(ret));
+  } else {
+    gpio_set_level(kFlashLedGpio, 1);
+    OPENER_TRACE_INFO("Flash LED GPIO %d configured successfully (active low)\n", kFlashLedGpio);
+  }
 }
 
 
@@ -271,9 +285,6 @@ EipStatus AfterAssemblyDataReceived(CipInstance *instance) {
 
   switch (instance->instance_number) {
     case DEMO_APP_OUTPUT_ASSEMBLY_NUM:
-      /* Process output assembly data (LED control only) */
-      gpio_set_level(kStatusLedGpio,
-                     (g_assembly_data096[0] & 0x01) ? 1 : 0);
       IdentityNoteIoActivity();
       break;
     case DEMO_APP_CONFIG_ASSEMBLY_NUM:
@@ -315,6 +326,102 @@ EipStatus ResetDeviceToInitialConfiguration(void) {
   s_io_activity_seen = false;
   CipEthernetLinkSetInterfaceState(1, kEthLinkInterfaceStateDisabled);
   ScheduleRestart();
+  return kEipStatusOk;
+}
+
+/** @brief Flash LED task implementation
+ *
+ * Flashes the flash LED (GPIO 23) for the specified duration.
+ * Flash pattern: 500ms on, 500ms off (1 second per cycle).
+ */
+static void flash_led_task(void *pvParameters) {
+  (void) pvParameters;
+  
+  const TickType_t flash_interval = pdMS_TO_TICKS(500); /* 500ms on/off */
+  TickType_t start_time = xTaskGetTickCount();
+  TickType_t duration_ticks = (TickType_t)(s_flash_led_state.duration_seconds * configTICK_RATE_HZ);
+  bool indefinite = (s_flash_led_state.duration_seconds == 0);
+  
+  while (s_flash_led_state.flash_active) {
+    /* Turn LED on (active low: 0 = on) */
+    gpio_set_level(kFlashLedGpio, 0);
+    vTaskDelay(flash_interval);
+    
+    if (!s_flash_led_state.flash_active) {
+      break;
+    }
+    
+    /* Turn LED off (active low: 1 = off) */
+    gpio_set_level(kFlashLedGpio, 1);
+    vTaskDelay(flash_interval);
+    
+    /* Check if duration has elapsed (if not indefinite) */
+    if (!indefinite) {
+      TickType_t elapsed = xTaskGetTickCount() - start_time;
+      if (elapsed >= duration_ticks) {
+        break;
+      }
+    }
+  }
+  
+  /* Restore LED to off state (active low: 1 = off) */
+  gpio_set_level(kFlashLedGpio, 1);
+  
+  /* Signal completion */
+  if (s_flash_led_state.task_semaphore != NULL) {
+    xSemaphoreGive(s_flash_led_state.task_semaphore);
+  }
+  
+  s_flash_led_state.task_handle = NULL;
+  s_flash_led_state.flash_active = false;
+  vTaskDelete(NULL);
+}
+
+EipStatus FlashLED(EipUint8 duration_seconds) {
+  /* Flash LED GPIO is initialized in ConfigureStatusLed() during ApplicationInitialization */
+  
+  /* Stop any existing flash operation */
+  if (s_flash_led_state.flash_active && s_flash_led_state.task_handle != NULL) {
+    s_flash_led_state.flash_active = false;
+    /* Wait for task to complete */
+    if (s_flash_led_state.task_semaphore != NULL) {
+      xSemaphoreTake(s_flash_led_state.task_semaphore, pdMS_TO_TICKS(1000));
+    }
+  }
+  
+  /* Create semaphore if it doesn't exist */
+  if (s_flash_led_state.task_semaphore == NULL) {
+    s_flash_led_state.task_semaphore = xSemaphoreCreateBinary();
+    if (s_flash_led_state.task_semaphore == NULL) {
+      OPENER_TRACE_ERR("Failed to create flash LED semaphore\n");
+      return kEipStatusError;
+    }
+  }
+  
+  /* Initialize semaphore to taken state */
+  xSemaphoreTake(s_flash_led_state.task_semaphore, 0);
+  
+  /* Set flash parameters */
+  s_flash_led_state.duration_seconds = duration_seconds;
+  s_flash_led_state.flash_active = true;
+  
+  /* Create flash task */
+  BaseType_t ret = xTaskCreate(
+    flash_led_task,
+    "flash_led",
+    2048,  /* Stack size */
+    NULL,
+    2,     /* Priority (higher than normal) */
+    &s_flash_led_state.task_handle
+  );
+  
+  if (ret != pdPASS) {
+    OPENER_TRACE_ERR("Failed to create flash LED task\n");
+    s_flash_led_state.flash_active = false;
+    return kEipStatusError;
+  }
+  
+  OPENER_TRACE_INFO("Flash LED started on GPIO %d: duration=%u seconds\n", kFlashLedGpio, duration_seconds);
   return kEipStatusOk;
 }
 

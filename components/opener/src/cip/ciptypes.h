@@ -103,13 +103,14 @@ typedef enum {
 
   /* Start CIP object-specific services */
   kEthLinkGetAndClear = 0x4C, /**< Ethernet Link object's Get_And_Clear service */
-  kForwardOpen = 0x54,
-  kLargeForwardOpen = 0x5B,
   kForwardClose = 0x4E,
+  kFlashLED = 0x4B, /**< Flash LED service for device identification (vendor-specific) */
   kUnconnectedSend = 0x52,
-  kGetConnectionOwner = 0x5A,
+  kForwardOpen = 0x54,
   kGetConnectionData = 0x56,
-  kSearchConnectionData = 0x57
+  kSearchConnectionData = 0x57,
+  kGetConnectionOwner = 0x5A,
+  kLargeForwardOpen = 0x5B
 /* End CIP object-specific services */
 } CIPServiceCode;
 
@@ -231,6 +232,7 @@ typedef struct {
   EipUint16 class_id;   /**< Class ID of the linked object */
   CipInstanceNum instance_number;   /**< Requested Instance Number of the linked object */
   EipUint16 attribute_number;   /**< Requested Attribute Number of the linked object */
+  EipUint16 member_id;   /**< Member ID for GetMember/SetMember/InsertMember/RemoveMember services (0 if not present) */
 } CipEpath;
 
 typedef enum connection_point_type {

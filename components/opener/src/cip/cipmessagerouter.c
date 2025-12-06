@@ -399,6 +399,9 @@ CipError CreateMessageRouterRequestStructure(const EipUint8 *data,
   data_length--;
 
   size_t number_of_decoded_bytes;
+  /* DecodePaddedEPath now properly handles Member ID segments for GetMember/SetMember/
+   * InsertMember/RemoveMember services (0x18-0x1B) by extracting member_id from the path.
+   * The member_id field in request_path will be populated if present, otherwise it will be 0. */
   const EipStatus path_result =
     DecodePaddedEPath(&(message_router_request->request_path),
                       &data,

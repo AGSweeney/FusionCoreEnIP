@@ -1583,6 +1583,7 @@ EipStatus DecodePaddedEPath(CipEpath *epath,
   epath->class_id = 0;
   epath->instance_number = 0;
   epath->attribute_number = 0;
+  epath->member_id = 0;
 
   while(number_of_decoded_elements < epath->path_size) {
     if( kSegmentTypeReserved == ( (*message_runner) & kSegmentTypeReserved ) ) {
@@ -1633,11 +1634,13 @@ EipStatus DecodePaddedEPath(CipEpath *epath,
 
       case SEGMENT_TYPE_LOGICAL_SEGMENT + LOGICAL_SEGMENT_TYPE_MEMBER_ID +
         LOGICAL_SEGMENT_FORMAT_EIGHT_BIT:
+        epath->member_id = *(EipUint8 *) (message_runner + 1);
         message_runner += 2;
         break;
       case SEGMENT_TYPE_LOGICAL_SEGMENT + LOGICAL_SEGMENT_TYPE_MEMBER_ID +
         LOGICAL_SEGMENT_FORMAT_SIXTEEN_BIT:
         message_runner += 2;
+        epath->member_id = GetUintFromMessage( &(message_runner) );
         number_of_decoded_elements++;
         break;
 

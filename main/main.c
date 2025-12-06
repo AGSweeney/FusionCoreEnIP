@@ -173,6 +173,10 @@ static bool s_user_led_initialized = false;
 static bool s_user_led_flash_enabled = false;
 static TaskHandle_t s_user_led_task_handle = NULL;
 
+// Flash LED state (GPIO23) - controlled by CIP Flash LED service
+#define FLASH_LED_GPIO 23
+static bool s_flash_led_initialized = false;
+
 static bool s_opener_initialized;
 
 static bool tcpip_config_uses_dhcp(void);
@@ -235,6 +239,9 @@ static void user_led_set(bool on);
 static void user_led_flash_task(void *pvParameters);
 static void user_led_start_flash(void);
 static void user_led_stop_flash(void);
+
+// Flash LED initialization (GPIO47 - controlled by CIP Flash LED service)
+static void flash_led_init(void);
 
 static void configure_netif_from_tcpip(esp_netif_t *netif) {
     if (netif == NULL) {
@@ -453,6 +460,9 @@ void app_main(void)
 {
     // Initialize user LED early at boot
     user_led_init();
+    
+    // Initialize flash LED early at boot (GPIO47 - controlled by CIP service)
+    flash_led_init();
     
     // Initialize log buffer early to capture boot logs
     // Use 32KB buffer to capture boot sequence and recent runtime logs
@@ -728,6 +738,68 @@ static void user_led_stop_flash(void) {
             s_user_led_task_handle = NULL;
             ESP_LOGI(TAG, "User LED: Stopped blinking (going solid for ACD conflict)");
         }
+    }
+}
+
+// Flash LED boot flash task
+static void flash_led_boot_task(void *pvParameters) {
+    (void)pvParameters;
+    
+    // Flash LED 3 times on boot as a visual indicator
+    const int flash_count = 3;
+    const int flash_on_ms = 150;
+    const int flash_off_ms = 150;
+    
+    for (int i = 0; i < flash_count; i++) {
+        gpio_set_level(FLASH_LED_GPIO, 1);  // LED on
+        vTaskDelay(pdMS_TO_TICKS(flash_on_ms));
+        gpio_set_level(FLASH_LED_GPIO, 0);  // LED off
+        if (i < flash_count - 1) {  // Don't delay after last flash
+            vTaskDelay(pdMS_TO_TICKS(flash_off_ms));
+        }
+    }
+    
+    // No logging here to save stack space - log is done before task creation
+    vTaskDelete(NULL);
+}
+
+// Flash LED initialization (GPIO47)
+// Note: This LED is controlled by the CIP Flash LED service (0x4B) in the opener component.
+// This initialization ensures the GPIO is configured as output at boot.
+// The actual flashing is handled by the FlashLED() callback in fusioncore.c.
+static void flash_led_init(void) {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << FLASH_LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret == ESP_OK) {
+        s_flash_led_initialized = true;
+        gpio_set_level(FLASH_LED_GPIO, 0);  // Start with LED off
+        ESP_LOGI(TAG, "Flash LED initialized on GPIO%d (controlled by CIP Flash LED service)", FLASH_LED_GPIO);
+        
+        // Create a task to flash the LED 3 times on boot
+        // Use a task so it doesn't block app_main() and works even if scheduler isn't fully ready
+        // Increased stack size to avoid overflow (logging removed from task to save stack)
+        BaseType_t task_ret = xTaskCreate(
+            flash_led_boot_task,
+            "flash_led_boot",
+            3072,  // Stack size (increased from 2048 to be safe)
+            NULL,
+            2,     // Priority
+            NULL   // Don't need to track handle
+        );
+        
+        if (task_ret == pdPASS) {
+            ESP_LOGI(TAG, "Flash LED boot task created (will flash 3 times)");
+        } else {
+            ESP_LOGW(TAG, "Failed to create flash LED boot task");
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize flash LED on GPIO%d: %s", FLASH_LED_GPIO, esp_err_to_name(ret));
     }
 }
 

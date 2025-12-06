@@ -215,6 +215,50 @@ EipStatus IdentityObjectPreResetCallback(
   return eip_status;
   }
 
+/** @brief Identity Object Flash LED Service Handler
+ *
+ *  Implements the Flash LED service (0x4B) for device identification.
+ *  Accepts a duration parameter (0-255 seconds). If duration is 0,
+ *  the LED should flash indefinitely until stopped or device reset.
+ *
+ * @param instance CIP instance (unused)
+ * @param message_router_request Pointer to the CIP request containing duration
+ * @param message_router_response Pointer to the CIP response
+ * @param originator_address Address struct of the originator (unused)
+ * @param encapsulation_session Associated encapsulation session (unused)
+ * @returns kEipStatusOkSend if successful, otherwise error status
+ */
+EipStatus IdentityObjectFlashLEDService(
+    CipInstance *RESTRICT const instance,
+    CipMessageRouterRequest *const message_router_request,
+    CipMessageRouterResponse *const message_router_response,
+    const struct sockaddr *originator_address,
+    const CipSessionHandle encapsulation_session
+) {
+  (void) instance;
+  (void) originator_address;
+  (void) encapsulation_session;
+
+  EipStatus eip_status = kEipStatusOkSend;
+
+  /* Flash LED service expects a 1-byte duration parameter (0-255 seconds) */
+  if(message_router_request->request_data_size > 1) {
+    message_router_response->general_status = kCipErrorTooMuchData;
+  } else {
+    CipOctet duration_seconds = 0; /* Default: 0 = flash indefinitely */
+    if(message_router_request->request_data_size == 1) {
+      duration_seconds = message_router_request->data[0];
+    }
+
+    /* Call the application callback to flash the LED */
+    if(kEipStatusError == FlashLED(duration_seconds)) {
+      message_router_response->general_status = kCipErrorDeviceStateConflict;
+    }
+  }
+
+  return eip_status;
+}
+
 /** @brief PreGetCallback for Identity Object
  *
  *  Implements CIP specification requirement that Attribute 8 (State)
@@ -316,7 +360,7 @@ EipStatus CipIdentityInit() {
                                    2, /* # of class services*/
                                    8, /* # of instance attributes*/
                                    8, /* # highest instance attribute number*/
-                                   5, /* # of instance services*/
+                                   6, /* # of instance services (Reset, GetAttributeSingle, GetAttributeAll, GetAttributeList, SetAttributeList, FlashLED)*/
                                    1, /* # of instances*/
                                    "identity", /* # class name (for debug)*/
                                    1, /* # class revision*/ //TODO: change revision to 2 - check
@@ -357,6 +401,7 @@ EipStatus CipIdentityInit() {
                 "GetAttributeList");
   InsertService(class, kSetAttributeList, &SetAttributeList,
                 "SetAttributeList");
+  InsertService(class, kFlashLED, &IdentityObjectFlashLEDService, "FlashLED");
 
   return kEipStatusOk;
 }
