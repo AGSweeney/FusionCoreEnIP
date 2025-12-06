@@ -1898,6 +1898,10 @@ EipStatus CipFileInit() {
 
   /* Create EDS File Instance 200 (EtherNet/IP standard) */
   CipInstance *eds_instance = AddCipInstance(file_object_class, kCipFileEDSFileInstanceNumber);
+  if(NULL == eds_instance) {
+    OPENER_TRACE_ERR("Failed to allocate EDS file instance - File Object will continue without it\n");
+    return kEipStatusOk; /* Don't fail File Object init if instance allocation fails */
+  }
   if( kEipStatusError == CreateFileObject(kCipFileEDSFileInstanceNumber, eds_file_instance, false) ) {
     OPENER_TRACE_WARN("Failed to create EDS file instance - File Object will continue without it\n");
     return kEipStatusOk; /* Don't fail File Object init if EDS file isn't available */
@@ -1914,7 +1918,9 @@ EipStatus CipFileInit() {
 
   /* Create Icon File Instance 201 (EtherNet/IP standard) */
   CipInstance *icon_instance = AddCipInstance(file_object_class, kCipFileIconFileInstanceNumber);
-  if( kEipStatusError == CreateFileObject(kCipFileIconFileInstanceNumber, icon_file_instance, false) ) {
+  if(NULL == icon_instance) {
+    OPENER_TRACE_WARN("Failed to allocate Icon file instance - File Object will continue without it\n");
+  } else if( kEipStatusError == CreateFileObject(kCipFileIconFileInstanceNumber, icon_file_instance, false) ) {
     OPENER_TRACE_WARN("Failed to create Icon file instance - File Object will continue without it\n");
   } else {
     /* Load embedded icon file into instance 201 */

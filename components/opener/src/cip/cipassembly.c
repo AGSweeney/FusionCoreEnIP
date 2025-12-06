@@ -113,7 +113,11 @@ CipInstance *CreateAssemblyObject(const CipInstanceNum instance_id,
     return NULL;
   }
 
-  CipInstance *const instance = AddCipInstance(assembly_class, instance_id); /* add instances (always succeeds (or asserts))*/
+  CipInstance *const instance = AddCipInstance(assembly_class, instance_id);
+  if(NULL == instance) {
+    OPENER_TRACE_ERR("Failed to allocate assembly instance %d\n", instance_id);
+    return NULL;
+  }
 
   CipByteArray *const assembly_byte_array = (CipByteArray *) CipCalloc(1,
                                                                        sizeof(

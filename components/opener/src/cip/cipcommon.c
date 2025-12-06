@@ -282,6 +282,12 @@ CipInstance *AddCipInstance(CipClass *RESTRICT const cip_class,
 
   if(NULL == instance) { /*we have no instance with given id*/
     instance = AddCipInstances(cip_class, 1);
+    if(NULL == instance) {
+      OPENER_TRACE_ERR("Failed to allocate instance %d for class %s\n",
+                      instance_id,
+                      cip_class->class_name);
+      return NULL;
+    }
     instance->instance_number = instance_id;
   }
 
@@ -441,10 +447,19 @@ void InsertAttribute(CipInstance *const instance,
 
   OPENER_ASSERT(NULL != data); /* Its not allowed to push a NULL pointer, as this marks an unused attribute struct */
 
+  if(NULL == instance) {
+    OPENER_TRACE_ERR("InsertAttribute: instance is NULL\n");
+    return;
+  }
+
   CipAttributeStruct *attribute = instance->attributes;
   CipClass *cip_class = instance->cip_class;
 
   OPENER_ASSERT(NULL != attribute);
+  if(NULL == attribute || NULL == cip_class) {
+    OPENER_TRACE_ERR("InsertAttribute: instance has NULL attributes or cip_class\n");
+    return;
+  }
   /* adding a attribute to a class that was not declared to have any attributes is not allowed */
   for(int i = 0; i < instance->cip_class->number_of_attributes; i++) {
     if(attribute->data == NULL) { /* found non set attribute */
@@ -528,7 +543,17 @@ void InsertGetSetCallback(CipClass *const cip_class,
 CipAttributeStruct *GetCipAttribute(const CipInstance *const instance,
                                     const EipUint16 attribute_number) {
 
+  if(NULL == instance) {
+    OPENER_TRACE_ERR("GetCipAttribute: instance is NULL\n");
+    return NULL;
+  }
+
   CipAttributeStruct *attribute = instance->attributes; /* init pointer to array of attributes*/
+  if(NULL == attribute || NULL == instance->cip_class) {
+    OPENER_TRACE_ERR("GetCipAttribute: instance has NULL attributes or cip_class\n");
+    return NULL;
+  }
+
   for(int i = 0; i < instance->cip_class->number_of_attributes; i++) {
     if(attribute_number == attribute->attribute_number) {
       return attribute;
