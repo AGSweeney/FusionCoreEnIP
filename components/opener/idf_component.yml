@@ -1,0 +1,4 @@
+idf:
+  version: ">=4.1.0"
+  description: "OpENer - Open Source EtherNet/IP Communication Stack for ESP-IDF"
+  license: "BSD"

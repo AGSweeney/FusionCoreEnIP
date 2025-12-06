@@ -26,7 +26,9 @@
 #include "generic_networkhandler.h"
 #include "eth_media_counters.h"
 #include "sdkconfig.h"
+#if OPENER_SYSTEM_CONFIG_ENABLED
 #include "system_config.h"
+#endif
 
 struct netif;
 

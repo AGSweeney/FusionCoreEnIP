@@ -64,8 +64,9 @@
 #include "nvtcpip.h"
 #include "ciptypes.h"
 
-/* Include system configuration for accessing network and device settings */
+#if OPENER_SYSTEM_CONFIG_ENABLED
 #include "system_config.h"
+#endif
 
 /* Parameter Object Class Revision */
 #define PARAMETER_CLASS_REVISION 1
@@ -129,8 +130,10 @@
 /* Global pointer to Parameter Object class for instance creation */
 static CipClass *s_parameter_class = NULL;
 
+#if OPENER_SYSTEM_CONFIG_ENABLED
 /* VL53L1X configuration structure - maintained for parameter access */
 static system_vl53l1x_config_t s_vl53l1x_config;
+#endif
 
 /* Forward declarations */
 static void InitializeCipParameter(CipClass *class);
