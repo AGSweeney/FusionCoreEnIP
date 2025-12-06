@@ -1,6 +1,6 @@
-# LLDP Component
+# LLDP Component for EtherNet/IP
 
-This component provides LLDP (Link Layer Discovery Protocol) support for EtherNet/IP adapter devices to satisfy ODVA compliance requirements.
+This component provides IEEE 802.1AB compliant LLDP (Link Layer Discovery Protocol) support for EtherNet/IP adapter devices, including CIP Identification TLV transmission and reception for EtherNet/IP device discovery.
 
 ## Components
 
@@ -84,19 +84,34 @@ LLDP can be enabled/disabled via `opener_user_conf.h`:
 
 ## Status
 
-- ✅ Component structure created
-- ✅ ESP32 raw socket layer implemented
-- ✅ Frame building utilities implemented
-- ✅ OpENer LLDP CIP objects integrated
-- ⚠️ LLDP Management Object has incomplete TODO functions
-- ⚠️ LLDP Data Table Object has incomplete TODO functions
-- ⚠️ Actual LLDP protocol implementation (frame construction, TLV encoding) not yet integrated
+### Fully Implemented
 
-## Next Steps
+- ✅ Component structure and initialization
+- ✅ ESP32 raw socket layer (L2 TAP) for Ethernet frame transmission/reception
+- ✅ LLDP frame building (all mandatory and optional TLVs)
+- ✅ LLDP frame reception and parsing (all TLVs)
+- ✅ Periodic LLDP frame transmission with configurable interval
+- ✅ Neighbor discovery and database management
+- ✅ Automatic neighbor cleanup (expired entries)
+- ✅ CIP Identification TLV transmission (ODVA OUI 0x001B1E, subtype 0x0E)
+- ✅ CIP Identification TLV reception and storage
+- ✅ LLDP Management Object (Class 0x109) with full attribute support
+- ✅ LLDP Data Table Object (Class 0x10A) with CIP Identification (Attribute 7)
+- ✅ Integration with OpENer EtherNet/IP stack
+- ✅ NVS persistence for LLDP Management Object configuration
 
-1. Complete the LLDP Management Object encode/decode functions
-2. Complete the LLDP Data Table Object implementation
-3. Implement LLDP protocol layer (frame construction, TLV encoding/decoding)
-4. Add periodic transmission timer
-5. Integrate with OpENer main loop
+### Implemented TLV Types
+
+**Mandatory TLVs:**
+- Chassis ID (Type 1)
+- Port ID (Type 2)
+- TTL (Type 3)
+- End of LLDPDU (Type 0)
+
+**Optional TLVs:**
+- System Name (Type 5)
+- System Description (Type 6)
+- System Capabilities (Type 7)
+- Management Address (Type 8)
+- CIP Identification (Type 127, Organization-Specific with ODVA OUI)
 
