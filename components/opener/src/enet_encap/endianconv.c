@@ -91,23 +91,21 @@ CipWord GetWordFromMessage(const CipOctet **const buffer_address) {
  */
 CipDint GetDintFromMessage(const EipUint8 **const buffer) {
   const unsigned char *p = (unsigned char *) *buffer;
-  EipUint32 data = p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24;
+  EipUint32 data = (EipUint32)p[0] | ((EipUint32)p[1] << 8) | ((EipUint32)p[2] << 16) | ((EipUint32)p[3] << 24);
   *buffer += 4;
   return data;
 }
 
 CipUdint GetUdintFromMessage(const CipOctet **const buffer_address) {
   const CipOctet *buffer = *buffer_address;
-  CipUdint data = buffer[0] | buffer[1] << 8 | buffer[2] << 16 | buffer[3] <<
-                  24;
+  CipUdint data = (CipUdint)buffer[0] | ((CipUdint)buffer[1] << 8) | ((CipUdint)buffer[2] << 16) | ((CipUdint)buffer[3] << 24);
   *buffer_address += 4;
   return data;
 }
 
 CipUdint GetDwordFromMessage(const CipOctet **const buffer_address) {
   const CipOctet *buffer = *buffer_address;
-  CipDword data = buffer[0] | buffer[1] << 8 | buffer[2] << 16 | buffer[3] <<
-                  24;
+  CipDword data = (CipDword)buffer[0] | ((CipDword)buffer[1] << 8) | ((CipDword)buffer[2] << 16) | ((CipDword)buffer[3] << 24);
   *buffer_address += 4;
   return data;
 }
