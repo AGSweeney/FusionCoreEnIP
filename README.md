@@ -98,6 +98,9 @@ The device implements the following CIP objects:
 - **TCP/IP Interface Object (Class 0xF5)**: Network configuration with ACD support
 - **Ethernet Link Object (Class 0xF6)**: Ethernet interface status and statistics
 - **QoS Object (Class 0x48)**: Quality of Service configuration
+  - All 8 DSCP attributes are readable (GetAttributeSingle service supported)
+  - Attributes 4-8 are configurable (SetAttributeSingle service supported): Urgent, Scheduled, High, Low, and Explicit DSCP values
+  - Attributes 1-3 are read-only: 802.1Q Tag Enable, DSCP PTP Event, DSCP PTP General
 - **File Object (Class 0x37)**: EDS file and icon serving
 - **Parameter Object (Class 0x0F)**: Device configuration parameters
 - **Port Object (Class 0xF4)**: Communication port information
@@ -126,11 +129,16 @@ The device implements the following CIP objects:
   - Stores discovered neighbor device information
   - TLV (Type-Length-Value) data: Chassis ID, Port ID, System Name, System Description
   - System capabilities and management address information
+  - **CIP Identification (Attribute 7)**: Stores CIP Identity information from neighbor devices (Vendor ID, Device Type, Product Code, Revision, Serial Number) when provided in LLDP frames
+- **CIP Identification TLV Transmission**: Device transmits CIP Identification in outgoing LLDP frames
+  - Organization-Specific TLV (Type 127) with ODVA OUI (0x001B1E)
+  - CIP Identification subtype (0x0E) containing device identity (Vendor ID, Device Type, Product Code, Revision, Serial Number)
+  - Enables other EtherNet/IP devices to discover this device's CIP Identity via LLDP
 - **Raw Ethernet Frame Transmission/Reception**: Uses ESP-NETIF L2 TAP for direct Ethernet frame handling at Layer 2
 - **Periodic LLDP Frame Transmission**: Configurable transmission intervals
 - **Neighbor Discovery**: Automatic topology mapping of neighboring network devices
 - **EtherNet/IP Configuration**: LLDP can be configured via EtherNet/IP CIP objects using explicit messaging (Get/Set Attribute services)
-- **ODVA Compliance**: Implementation in progress to achieve ODVA EtherNet/IP compliance for network discovery and topology information
+- **Compliance**: Supports EtherNet/IP compliance requirements for network discovery and topology information
 - See [LLDP Component Documentation](components/lldp/README.md) for implementation details
 
 ### CIP Parameter Object (Class 0x0F)
@@ -273,7 +281,7 @@ Access the web interface at `http://<device-ip>` on port 80.
 - `/lsm6ds3` - LSM6DS3 IMU configuration, calibration, and angle monitoring
 - `/gp8403` - GP8403 DAC configuration and output control
 - `/mcp230xx` - MCP230XX GPIO expander configuration and control
-- `/i2c` - I2C bus pull-up resistor configuration
+- `/i2c` - I2C bus configuration (pull-up resistors and secondary bus enable/disable)
 
 ### REST API
 
@@ -320,6 +328,11 @@ See [Complete API Documentation](docs/API_Endpoints.md) for detailed endpoint re
 - Centralized I2C bus manager
 - Automatic device scanning and detection during boot
 - Configurable pull-up resistors (primary and secondary buses)
+- Secondary I2C bus enable/disable configuration (default: disabled)
+  - Prevents initialization of secondary bus when not in use
+  - Reduces power consumption and avoids issues on unpopulated buses
+  - Configurable via web UI or NVS
+- Improved error handling for empty/unpopulated buses
 - Thread-safe I2C operations with mutex protection
 - Device count tracking (reported in Assembly data)
 - Support for multiple I2C buses
@@ -634,6 +647,7 @@ Key configuration options available via `idf.py menuconfig`:
 - **I2C Bus Configuration**: 
   - Primary and secondary bus SDA/SCL pin assignments
   - Pull-up resistor enable/disable per bus
+  - Secondary bus enable/disable (default: disabled, requires restart)
 - **Sensor Configuration**: 
   - Per-sensor enable/disable controls
   - VL53L1X, LSM6DS3, NAU7802 individual enable flags
