@@ -134,7 +134,7 @@ EipStatus CipQoSInit() {
                                    2, /* # class services */
                                    8, /* # instance attributes */
                                    8, /* # highest instance attribute number */
-                                   2, /* # instance services */
+                                   3, /* # instance services (GetAttributeSingle, GetAttributeAll, SetAttributeSingle) */
                                    1, /* # instances */
                                    "Quality of Service",
                                    1, /* # class revision */
@@ -152,59 +152,61 @@ EipStatus CipQoSInit() {
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.q_frames_enable,
-                  kGetableSingle);
+                  kGetableSingleAndAll);
   InsertAttribute(instance,
                   2,
                   kCipUsint,
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.dscp.event,
-                  kGetableSingle);
+                  kGetableSingleAndAll);
   InsertAttribute(instance,
                   3,
                   kCipUsint,
                   EncodeCipUsint,
                   NULL,
                   (void *) &g_qos.dscp.general,
-                  kGetableSingle);
+                  kGetableSingleAndAll);
   InsertAttribute(instance,
                   4,
                   kCipUsint,
                   EncodeCipUsint,
                   DecodeCipQoSAttribute,
                   (void *) &g_qos.dscp.urgent,
-                  kGetableSingle | kSetable | kNvDataFunc);
+                  kGetableSingleAndAll | kSetable | kNvDataFunc);
   InsertAttribute(instance,
                   5,
                   kCipUsint,
                   EncodeCipUsint,
                   DecodeCipQoSAttribute,
                   (void *) &g_qos.dscp.scheduled,
-                  kGetableSingle | kSetable | kNvDataFunc);
+                  kGetableSingleAndAll | kSetable | kNvDataFunc);
   InsertAttribute(instance,
                   6,
                   kCipUsint,
                   EncodeCipUsint,
                   DecodeCipQoSAttribute,
                   (void *) &g_qos.dscp.high,
-                  kGetableSingle | kSetable | kNvDataFunc);
+                  kGetableSingleAndAll | kSetable | kNvDataFunc);
   InsertAttribute(instance,
                   7,
                   kCipUsint,
                   EncodeCipUsint,
                   DecodeCipQoSAttribute,
                   (void *) &g_qos.dscp.low,
-                  kGetableSingle | kSetable | kNvDataFunc);
+                  kGetableSingleAndAll | kSetable | kNvDataFunc);
   InsertAttribute(instance,
                   8,
                   kCipUsint,
                   EncodeCipUsint,
                   DecodeCipQoSAttribute,
                   (void *) &g_qos.dscp.explicit_msg,
-                  kGetableSingle | kSetable | kNvDataFunc);
+                  kGetableSingleAndAll | kSetable | kNvDataFunc);
 
   InsertService(qos_class, kGetAttributeSingle, &GetAttributeSingle,
                 "GetAttributeSingle");
+  InsertService(qos_class, kGetAttributeAll, &GetAttributeAll,
+                "GetAttributeAll");
   InsertService(qos_class, kSetAttributeSingle, &SetAttributeSingle,
                   "SetAttributeSingle");
 
