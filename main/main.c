@@ -120,7 +120,6 @@
 #include "lwip/etharp.h"
 #include "nvs_flash.h"
 #include "esp_ota_ops.h"
-#include "esp_timer.h"
 #include "opener.h"
 #include "nvtcpip.h"
 #include "ciptcpipinterface.h"
@@ -240,7 +239,7 @@ static void user_led_flash_task(void *pvParameters);
 static void user_led_start_flash(void);
 static void user_led_stop_flash(void);
 
-// Flash LED initialization (GPIO47 - controlled by CIP Flash LED service)
+// Flash LED initialization (GPIO23 - controlled by CIP Flash LED service)
 static void flash_led_init(void);
 
 static void configure_netif_from_tcpip(esp_netif_t *netif) {
@@ -461,7 +460,7 @@ void app_main(void)
     // Initialize user LED early at boot
     user_led_init();
     
-    // Initialize flash LED early at boot (GPIO47 - controlled by CIP service)
+    // Initialize flash LED early at boot (GPIO23 - controlled by CIP service)
     flash_led_init();
     
     // Initialize log buffer early to capture boot logs
@@ -746,9 +745,9 @@ static void flash_led_boot_task(void *pvParameters) {
     (void)pvParameters;
     
     // Flash LED 3 times on boot as a visual indicator
-    const int flash_count = 3;
-    const int flash_on_ms = 150;
-    const int flash_off_ms = 150;
+    const int flash_count = 5;
+    const int flash_on_ms = 100;
+    const int flash_off_ms = 100;
     
     for (int i = 0; i < flash_count; i++) {
         gpio_set_level(FLASH_LED_GPIO, 1);  // LED on
@@ -763,7 +762,7 @@ static void flash_led_boot_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-// Flash LED initialization (GPIO47)
+// Flash LED initialization (GPIO23)
 // Note: This LED is controlled by the CIP Flash LED service (0x4B) in the opener component.
 // This initialization ensures the GPIO is configured as output at boot.
 // The actual flashing is handled by the FlashLED() callback in fusioncore.c.

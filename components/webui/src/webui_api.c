@@ -311,12 +311,13 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
         size_t data_in_buffer = header_read - header_len;
         
         // Start streaming OTA update
-        // Estimate firmware size: Content-Length minus multipart headers (typically ~1KB)
+        // Estimate firmware size: Content-Length minus multipart headers (typically ~200-500 bytes)
         // This gives us a reasonable estimate for progress tracking
+        // Note: Actual overhead will be validated after upload completes
         size_t estimated_firmware_size = 0;
         if (content_len > 0) {
-            // Subtract estimated multipart header overhead (boundary + headers ~1KB)
-            estimated_firmware_size = (content_len > 1024) ? (content_len - 1024) : content_len;
+            // Use conservative overhead estimate (500 bytes) - actual will be validated later
+            estimated_firmware_size = (content_len > 500) ? (content_len - 500) : content_len;
         }
         esp_ota_handle_t ota_handle = ota_manager_start_streaming_update(estimated_firmware_size);
         if (ota_handle == 0) {
@@ -417,10 +418,16 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
         const uint32_t max_timeouts = 100; // Max 100 timeouts (~10 seconds at 100ms each)
         
         // Calculate expected firmware size for validation
+        // Note: We can't know the exact overhead until we see the boundary, so we use a conservative estimate
+        // Actual overhead is typically 200-500 bytes (boundary string + headers), but can vary
+        // We'll validate the actual overhead after upload completes
         size_t expected_firmware_bytes = 0;
         if (content_len > 0) {
-            // Account for multipart overhead (boundary + headers, typically ~1KB)
-            expected_firmware_bytes = (content_len > 1024) ? (content_len - 1024) : content_len;
+            // Use a more conservative overhead estimate (500 bytes instead of 1024)
+            // This accounts for: boundary string (~50-200 bytes), headers (~100-300 bytes), line breaks
+            // If actual overhead is less, we'll receive slightly more than expected, which is OK
+            // The boundary detection will catch if we write too much
+            expected_firmware_bytes = (content_len > 500) ? (content_len - 500) : content_len;
         }
         
         while (!done) {
@@ -448,12 +455,26 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
                         ESP_LOGI(TAG, "Connection closed by client after boundary found, total written: %d bytes", total_written);
                         break;
                     } else {
-                        // Connection closed without finding boundary - search overlap buffer
+                        // Connection closed without finding boundary - search for boundary in last data
+                        // First check if we received more than expected - if so, we definitely wrote boundary data
+                        if (expected_firmware_bytes > 0 && total_written > expected_firmware_bytes + 500) {
+                            ESP_LOGE(TAG, "Received %d bytes, expected ~%d - wrote too much (likely boundary data), aborting OTA", 
+                                     total_written, expected_firmware_bytes);
+                            esp_ota_abort(ota_handle);
+                            free(chunk_buffer);
+                            free(boundary_overlap_buffer);
+                            return send_json_error(req, "Upload size mismatch - received more data than expected. Upload may be corrupted.", 400);
+                        }
+                        
+                        // Search for boundary in overlap buffer and last chunk
+                        char *boundary_pos_found = NULL;
+                        size_t boundary_offset = 0;
+                        bool found_in_chunk = false;
+                        
+                        // First, search the overlap buffer
                         if (boundary_overlap_buffer_fill > 0) {
                             ESP_LOGI(TAG, "Searching overlap buffer (%d bytes) for boundary after connection close", boundary_overlap_buffer_fill);
-                            char *boundary_pos_found = NULL;
                             
-                            // Search overlap buffer for boundary
                             char *end_match = (char *)memmem(boundary_overlap_buffer, boundary_overlap_buffer_fill, end_boundary, strlen(end_boundary));
                             if (end_match != NULL) {
                                 bool is_valid = false;
@@ -468,6 +489,7 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
                                 }
                                 if (is_valid) {
                                     boundary_pos_found = end_match;
+                                    boundary_offset = boundary_pos_found - boundary_overlap_buffer;
                                 }
                             }
                             
@@ -490,38 +512,60 @@ static esp_err_t api_ota_update_handler(httpd_req_t *req)
                                         if (start_match + end_boundary_len > boundary_overlap_buffer + boundary_overlap_buffer_fill || 
                                             memcmp(start_match, end_boundary, end_boundary_len) != 0) {
                                             boundary_pos_found = start_match;
+                                            boundary_offset = boundary_pos_found - boundary_overlap_buffer;
                                         }
                                     }
                                 }
                             }
+                        }
+                        
+                        // If not found in overlap buffer, search the last chunk_buffer (if we have one)
+                        // Note: chunk_buffer may contain data from the last successful read before close
+                        // We need to check if there's any unprocessed data in chunk_buffer
+                        // Actually, chunk_buffer is only used during the loop, so if we're here, 
+                        // the last chunk was already processed. The overlap buffer should have the boundary.
+                        
+                        if (boundary_pos_found != NULL) {
+                            // Found boundary - we wrote too much
+                            size_t bytes_before_boundary = boundary_offset;
+                            // Remove trailing \r\n
+                            while (bytes_before_boundary > 0 && 
+                                   (boundary_overlap_buffer[bytes_before_boundary - 1] == '\r' || 
+                                    boundary_overlap_buffer[bytes_before_boundary - 1] == '\n')) {
+                                bytes_before_boundary--;
+                            }
+                            if (bytes_before_boundary >= 2 && 
+                                boundary_overlap_buffer[bytes_before_boundary - 2] == '\r' && 
+                                boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
+                                bytes_before_boundary -= 2;
+                            } else if (bytes_before_boundary >= 1 && 
+                                       boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
+                                bytes_before_boundary -= 1;
+                            }
                             
-                            if (boundary_pos_found != NULL) {
-                                // Found boundary in overlap buffer - this means we wrote too much
-                                size_t bytes_before_boundary = boundary_pos_found - boundary_overlap_buffer;
-                                // Remove trailing \r\n
-                                while (bytes_before_boundary > 0 && 
-                                       (boundary_overlap_buffer[bytes_before_boundary - 1] == '\r' || 
-                                        boundary_overlap_buffer[bytes_before_boundary - 1] == '\n')) {
-                                    bytes_before_boundary--;
+                            size_t extra_bytes = boundary_overlap_buffer_fill - bytes_before_boundary;
+                            ESP_LOGE(TAG, "Found boundary in overlap buffer after close - estimated %d extra bytes written (boundary at offset %d), aborting OTA", 
+                                     extra_bytes, (int)boundary_offset);
+                            esp_ota_abort(ota_handle);
+                            free(chunk_buffer);
+                            free(boundary_overlap_buffer);
+                            return send_json_error(req, "Boundary detected in firmware data - upload corrupted, please retry", 400);
+                        } else {
+                            ESP_LOGW(TAG, "Boundary not found in overlap buffer (%d bytes)", boundary_overlap_buffer_fill);
+                            // If we're close to expected size, assume upload is complete
+                            // Otherwise, warn but continue (might be a false negative)
+                            if (expected_firmware_bytes > 0) {
+                                size_t diff = (total_written > expected_firmware_bytes) ? 
+                                             (total_written - expected_firmware_bytes) : 
+                                             (expected_firmware_bytes - total_written);
+                                if (diff > 2000) {
+                                    ESP_LOGE(TAG, "Size mismatch: received %d bytes, expected ~%d (diff: %d). Upload may be incomplete or corrupted.", 
+                                             total_written, expected_firmware_bytes, diff);
+                                    esp_ota_abort(ota_handle);
+                                    free(chunk_buffer);
+                                    free(boundary_overlap_buffer);
+                                    return send_json_error(req, "Upload size mismatch - upload may be incomplete or corrupted", 400);
                                 }
-                                if (bytes_before_boundary >= 2 && 
-                                    boundary_overlap_buffer[bytes_before_boundary - 2] == '\r' && 
-                                    boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
-                                    bytes_before_boundary -= 2;
-                                } else if (bytes_before_boundary >= 1 && 
-                                           boundary_overlap_buffer[bytes_before_boundary - 1] == '\n') {
-                                    bytes_before_boundary -= 1;
-                                }
-                                
-                                size_t extra_bytes = boundary_overlap_buffer_fill - bytes_before_boundary;
-                                ESP_LOGE(TAG, "Found boundary in overlap buffer after close - estimated %d extra bytes written (boundary at offset %d), aborting OTA", 
-                                         extra_bytes, (int)(boundary_pos_found - boundary_overlap_buffer));
-                                esp_ota_abort(ota_handle);
-                                free(chunk_buffer);
-                                free(boundary_overlap_buffer);
-                                return send_json_error(req, "Boundary detected in firmware data - upload corrupted, please retry", 400);
-                            } else {
-                                ESP_LOGW(TAG, "Boundary not found in overlap buffer (%d bytes)", boundary_overlap_buffer_fill);
                             }
                         }
                         
@@ -1290,13 +1334,26 @@ static esp_err_t api_post_i2c_secondary_enabled_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
     
+    // Apply immediately - enable/disable the bus at runtime
+    esp_err_t bus_ret = i2c_bus_manager_set_secondary_enabled(enabled);
+    if (bus_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to %s secondary I2C bus: %s", 
+                 enabled ? "enable" : "disable", esp_err_to_name(bus_ret));
+        // Still return success since NVS was saved, but note the runtime error
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddStringToObject(response, "status", "ok");
+        cJSON_AddBoolToObject(response, "enabled", enabled);
+        cJSON_AddStringToObject(response, "message", "Setting saved to NVS, but failed to apply immediately. Restart may be required.");
+        return send_json_response(req, response, ESP_OK);
+    }
+    
     s_cached_i2c_secondary_bus_enabled = enabled;
     s_i2c_secondary_bus_enabled_cached = true;
     
     cJSON *response = cJSON_CreateObject();
     cJSON_AddStringToObject(response, "status", "ok");
     cJSON_AddBoolToObject(response, "enabled", enabled);
-    cJSON_AddStringToObject(response, "message", "Secondary I2C bus setting saved. Restart required for changes to take effect.");
+    cJSON_AddStringToObject(response, "message", "Secondary I2C bus setting saved and applied immediately.");
     
     return send_json_response(req, response, ESP_OK);
 }

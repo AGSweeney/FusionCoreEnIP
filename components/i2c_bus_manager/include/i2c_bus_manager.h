@@ -54,6 +54,24 @@ bool i2c_bus_manager_is_device_detected(uint8_t address, i2c_device_type_t type)
 
 void i2c_bus_manager_get_device_counts(i2c_device_counts_t *counts);
 
+/**
+ * @brief Enable or disable the secondary I2C bus at runtime
+ * 
+ * @param enabled True to enable, false to disable
+ * @return esp_err_t ESP_OK on success
+ * 
+ * Note: This will initialize or deinitialize the secondary bus.
+ * If disabling, all devices on the secondary bus will become unavailable.
+ */
+esp_err_t i2c_bus_manager_set_secondary_enabled(bool enabled);
+
+/**
+ * @brief Check if secondary I2C bus is currently enabled
+ * 
+ * @return true if enabled, false if disabled
+ */
+bool i2c_bus_manager_is_secondary_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

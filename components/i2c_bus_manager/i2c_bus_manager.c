@@ -361,3 +361,63 @@ void i2c_bus_manager_get_device_counts(i2c_device_counts_t *counts)
     }
 }
 
+esp_err_t i2c_bus_manager_set_secondary_enabled(bool enabled)
+{
+    esp_err_t ret;
+    
+    // If already in desired state, return success
+    if ((enabled && s_secondary_bus != NULL) || (!enabled && s_secondary_bus == NULL)) {
+        return ESP_OK;
+    }
+    
+    if (enabled) {
+        // Enable secondary bus
+        bool secondary_pullup = system_i2c_secondary_pullup_load();
+        
+        // Perform bus recovery before initializing
+        i2c_bus_recovery(I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, "Secondary");
+        vTaskDelay(pdMS_TO_TICKS(10));
+        
+        i2c_master_bus_config_t secondary_bus_config = {
+            .i2c_port = I2C_BUS_SECONDARY_NUM,
+            .sda_io_num = I2C_SECONDARY_SDA_GPIO,
+            .scl_io_num = I2C_SECONDARY_SCL_GPIO,
+            .clk_source = I2C_CLK_SRC_DEFAULT,
+            .glitch_ignore_cnt = 7,
+            .flags = {
+                .enable_internal_pullup = secondary_pullup,
+            },
+        };
+        
+        ret = i2c_new_master_bus(&secondary_bus_config, &s_secondary_bus);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to enable secondary I2C bus: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        
+        ESP_LOGI(TAG, "Secondary I2C bus enabled (SDA: GPIO%d, SCL: GPIO%d, pullup: %s)",
+                 I2C_SECONDARY_SDA_GPIO, I2C_SECONDARY_SCL_GPIO, secondary_pullup ? "enabled" : "disabled");
+        
+        // Scan the bus for devices
+        scan_bus(s_secondary_bus, "Secondary");
+    } else {
+        // Disable secondary bus
+        if (s_secondary_bus != NULL) {
+            ret = i2c_del_master_bus(s_secondary_bus);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to disable secondary I2C bus: %s", esp_err_to_name(ret));
+                return ret;
+            }
+            s_secondary_bus = NULL;
+            ESP_LOGI(TAG, "Secondary I2C bus disabled");
+        }
+    }
+    
+    return ESP_OK;
+}
+
+bool i2c_bus_manager_is_secondary_enabled(void)
+{
+    return (s_secondary_bus != NULL);
+}
+

@@ -100,6 +100,9 @@
 #define PARAM_ID_NAU7802_ZERO_OFFSET  18
 /* PARAM_ID_NAU7802_BYTE_OFFSET removed - byte offsets are statically mapped, not configurable */
 
+/* I2C Bus Configuration Parameters (19) */
+#define PARAM_ID_I2C_SECONDARY_ENABLED 19
+
 /* VL53L1X Time-of-Flight Sensor Parameters (22-37) */
 #define PARAM_ID_VL53L1X_ENABLED           22
 #define PARAM_ID_VL53L1X_DISTANCE_MODE     23
@@ -304,6 +307,21 @@ EipStatus CipParameterInit(void) {
     &acd_timeout,
     "seconds", "ACD timeout in seconds (1-3600, default: 10). Timeout for ACD conflict detection operations.",
     &acd_timeout_min, &acd_timeout_max, &acd_timeout_default, kGetableSingleAndAll | kSetable);
+
+  /* Parameter 19: I2C Secondary Bus Enabled */
+#if OPENER_SYSTEM_CONFIG_ENABLED
+  static CipBool i2c_secondary_enabled = 0;
+  /* Initialize from system_config */
+  i2c_secondary_enabled = system_i2c_secondary_bus_enabled_load() ? 1 : 0;
+  static CipBool i2c_secondary_min = false;
+  static CipBool i2c_secondary_max = true;
+  static CipBool i2c_secondary_default = false;
+  CreateParameterInstance(s_parameter_class, PARAM_ID_I2C_SECONDARY_ENABLED,
+    "I2C Secondary Bus Enabled", kCipBool,
+    &i2c_secondary_enabled,
+    "", "Enable secondary I2C bus (1=enabled, 0=disabled). Takes effect immediately.",
+    &i2c_secondary_min, &i2c_secondary_max, &i2c_secondary_default, kGetableSingleAndAll | kSetable);
+#endif
 
   /* Create NAU7802 scale parameters - load initial values from NVS at runtime */
   /* Parameter 10: NAU7802 Enabled */
@@ -604,7 +622,69 @@ EipStatus CipParameterInit(void) {
     "", "Enable or disable HTTP REST API (requires reboot to take effect)",
     &webapi_min, &webapi_max, &webapi_default, kSetAndGetAble);
 
-  OPENER_TRACE_INFO("Parameter Object initialized with %d instances (39 active)\n", num_instances);
+  /* Create placeholder instances for unused instance IDs to avoid "attribute not defined" errors
+   * when CIP clients try to enumerate or access these instances.
+   * Unused instances: 7-8, 38-49, 52, 55-59
+   */
+  static CipShortString unused_name;
+  static CipShortString unused_units;
+  static CipShortString unused_help;
+  static CipUsint unused_value = 0;
+  static CipUsint unused_min = 0;
+  static CipUsint unused_max = 0;
+  static CipUsint unused_default = 0;
+  
+  SetCipShortStringByCstr(&unused_name, "Unused");
+  SetCipShortStringByCstr(&unused_units, "");
+  SetCipShortStringByCstr(&unused_help, "This parameter instance is not used");
+  
+  /* Create placeholders for unused instances
+   * Note: Instance 19 is included here in case OPENER_SYSTEM_CONFIG_ENABLED is not defined.
+   * If it was initialized above, the check for unused_instance->data == NULL will skip it.
+   */
+  int unused_instances[] = {7, 8, 19, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 59};
+  for (int i = 0; i < sizeof(unused_instances)/sizeof(unused_instances[0]); i++) {
+    CipInstance *unused_instance = GetCipInstance(s_parameter_class, unused_instances[i]);
+    if (unused_instance != NULL && unused_instance->data == NULL) {
+      /* Create minimal parameter structure */
+      CipParameterInstance *param = (CipParameterInstance *)calloc(1, sizeof(CipParameterInstance) + (sizeof(CipUsint) * 3));
+      if (param != NULL) {
+        unused_instance->data = param;
+        param->parameter_name = unused_name;
+        param->units = unused_units;
+        param->help_string = unused_help;
+        param->data_type_code = kCipUsint;
+        param->parameter_value = &unused_value;
+        param->parameter_id = unused_instances[i];
+        
+        void *placeholder_base = ((EipUint8 *)param) + sizeof(CipParameterInstance);
+        param->minimum_value = placeholder_base;
+        param->maximum_value = ((EipUint8 *)placeholder_base) + sizeof(CipUsint);
+        param->default_value = ((EipUint8 *)placeholder_base) + (sizeof(CipUsint) * 2);
+        
+        /* Register minimal attributes */
+        InsertAttribute(unused_instance, 1, kCipShortString, EncodeCipShortString,
+                       NULL, &param->parameter_name, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 2, kCipUsint, EncodeCipUsint,
+                       NULL, &unused_value, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 3, kCipShortString, EncodeCipShortString,
+                       NULL, &param->units, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 4, kCipShortString, EncodeCipShortString,
+                       NULL, &param->help_string, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 5, kCipUsint, EncodeCipUsint,
+                       NULL, param->minimum_value, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 6, kCipUsint, EncodeCipUsint,
+                       NULL, param->maximum_value, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 7, kCipUsint, EncodeCipUsint,
+                       NULL, param->default_value, kGetableSingleAndAll);
+        InsertAttribute(unused_instance, 8, kCipUsint, EncodeCipUsint,
+                       NULL, &param->data_type_code, kGetableSingleAndAll);
+      }
+    }
+  }
+
+  OPENER_TRACE_INFO("Parameter Object initialized with %d instances (39 active, %d placeholders)\n", 
+                    num_instances, sizeof(unused_instances)/sizeof(unused_instances[0]));
 
   return kEipStatusOk;
 }
@@ -759,6 +839,28 @@ static EipStatus ParameterPostSetCallback(CipInstance *const instance,
       /* ACD timeout changes - value is stored in parameter, no NVS needed (runtime setting) */
       OPENER_TRACE_INFO("ACD timeout changed to %u seconds (takes effect on next conflict)\n", 
                         *(CipUint *)param->parameter_value);
+      break;
+    }
+
+    case PARAM_ID_I2C_SECONDARY_ENABLED: {
+#if OPENER_SYSTEM_CONFIG_ENABLED
+      CipBool *enabled = (CipBool *)param->parameter_value;
+      bool enable_val = *enabled ? true : false;
+      
+      /* Save to NVS */
+      system_i2c_secondary_bus_enabled_save(enable_val);
+      
+      /* Apply immediately - enable/disable the bus */
+      extern esp_err_t i2c_bus_manager_set_secondary_enabled(bool enabled);
+      esp_err_t ret = i2c_bus_manager_set_secondary_enabled(enable_val);
+      if (ret == ESP_OK) {
+        OPENER_TRACE_INFO("I2C Secondary Bus %s (saved to NVS, applied immediately)\n", 
+                         enable_val ? "enabled" : "disabled");
+      } else {
+        OPENER_TRACE_ERR("Failed to %s I2C Secondary Bus: %d\n", 
+                        enable_val ? "enable" : "disable", ret);
+      }
+#endif
       break;
     }
 

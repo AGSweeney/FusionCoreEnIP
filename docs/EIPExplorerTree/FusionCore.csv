@@ -183,7 +183,7 @@ Device IP;Name;Class;ClassName;Instance;InstanceName;Attribute;AttributeName
 ;;;;;;6;Maximum Value
 ;;;;;;7;Default Value
 ;;;;;;8;Data Type Code
-;;;;19;(Unused)
+;;;;19;Secondary I2C Enable
 ;;;;;;1;Parameter Name
 ;;;;;;2;Parameter Value
 ;;;;;;3;Parameter Units
