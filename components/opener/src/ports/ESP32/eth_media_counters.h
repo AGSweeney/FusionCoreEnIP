@@ -10,13 +10,23 @@
  *  This module provides hardware-level media counter collection for the
  *  EtherNet/IP Ethernet Link object (Attribute #5).
  *
+ *  HARDWARE LIMITATION (Confirmed by Espressif, 2025-12-02):
+ *  ESP32 and ESP32-P4 series chips do NOT enable the MMC/RMON module.
+ *  Therefore, hardware Ethernet statistics registers are NOT available.
+ *
  *  CURRENT STATUS (ESP-IDF v5.5.1):
- *  - Supports IP101 PHY counter collection (RX errors only)
- *  - EMAC hardware counters NOT available (API removed in ESP-IDF v5.x)
+ *  - Supports IP101 PHY counter collection (RX CRC errors, RX symbol errors)
+ *  - EMAC hardware counters NOT available (MMC/RMON not enabled in hardware)
  *  - Works on all ESP32 variants (ESP32, ESP32-S2, ESP32-S3, ESP32-P4)
- *  - Most MAC-level counters return zero due to hardware access limitations
+ *  - MAC-level counters return zero due to hardware limitation
+ *
+ *  Available Counters:
+ *  - IP101 PHY: RX CRC errors, RX symbol errors (via MDIO)
+ *  - ESP32 EMAC: None (MMC/RMON module not enabled)
  *
  *  Supports automatic PHY detection with graceful fallback for non-IP101 PHYs.
+ *
+ *  See docs/EMAC_STATISTICS_LIMITATION.md for detailed documentation.
  */
 
 #ifndef ETH_MEDIA_COUNTERS_H
@@ -47,9 +57,13 @@ bool EthMediaCountersSupported(void);
 /**
  * @brief Collect media counters from hardware
  * 
- * Reads counters from ESP32 EMAC and IP101 PHY (if detected).
+ * Reads counters from IP101 PHY (if detected). ESP32 EMAC hardware counters
+ * are NOT available because the MMC/RMON module is not enabled in hardware
+ * (confirmed by Espressif).
+ * 
  * If IP101 is not detected, PHY-specific counters are set to zero.
- * ESP32 EMAC counters are always available regardless of PHY type.
+ * MAC-level counters (collisions, FCS errors, etc.) always return zero
+ * due to hardware limitation.
  * 
  * @param counters Pointer to media counters structure to fill
  */

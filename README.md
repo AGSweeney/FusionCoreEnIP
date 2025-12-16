@@ -97,6 +97,9 @@ The device implements the following CIP objects:
 - **Connection Manager Object (Class 0x06)**: Connection establishment and management
 - **TCP/IP Interface Object (Class 0xF5)**: Network configuration with ACD support
 - **Ethernet Link Object (Class 0xF6)**: Ethernet interface status and statistics
+  - **Note**: MAC-level hardware statistics are limited due to ESP32-P4 hardware (MMC/RMON module not enabled)
+  - PHY-level counters (IP101) are available: RX CRC errors, RX symbol errors
+  - See [EMAC Statistics Limitation Documentation](docs/EMAC_STATISTICS_LIMITATION.md) for details
 - **QoS Object (Class 0x48)**: Quality of Service configuration
   - All 8 DSCP attributes are readable (GetAttributeSingle service supported)
   - Attributes 4-8 are configurable (SetAttributeSingle service supported): Urgent, Scheduled, High, Low, and Explicit DSCP values
@@ -232,7 +235,8 @@ The device implements the following CIP objects:
 ### Ethernet Connectivity
 
 - 10/100 Mbps Ethernet interface
-- IP101 PHY support with media counters
+- IP101 PHY support with media counters (RX CRC errors, RX symbol errors)
+- **Hardware Limitation**: MAC-level statistics not available (MMC/RMON module not enabled in ESP32-P4)
 - Link status monitoring
 - MAC address configuration
 
