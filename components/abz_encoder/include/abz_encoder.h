@@ -67,6 +67,7 @@ typedef struct {
     bool index_detected;           /**< Index pulse detected flag */
     abz_encoder_direction_t last_direction; /**< Last movement direction */
     bool initialized;              /**< Initialization flag */
+    void *mutex;                   /**< Mutex for thread-safe access (internal) */
 } abz_encoder_t;
 
 /**
@@ -77,6 +78,14 @@ typedef struct {
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t abz_encoder_init(abz_encoder_t *encoder, abz_encoder_resolution_t resolution);
+
+/**
+ * @brief Deinitialize encoder handle and free resources
+ * 
+ * @param encoder Pointer to encoder handle structure
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t abz_encoder_deinit(abz_encoder_t *encoder);
 
 /**
  * @brief Process quadrature state change

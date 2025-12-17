@@ -37,6 +37,8 @@
 
 #include "abz_encoder.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <limits.h>
 
@@ -75,7 +77,31 @@ esp_err_t abz_encoder_init(abz_encoder_t *encoder, abz_encoder_resolution_t reso
     encoder->initialized = true;
     encoder->last_direction = ABZ_ENCODER_DIRECTION_FORWARD;
 
+    // Create mutex for thread-safe access
+    encoder->mutex = xSemaphoreCreateMutex();
+    if (encoder->mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        encoder->initialized = false;
+        return ESP_ERR_NO_MEM;
+    }
+
     ESP_LOGI(TAG, "Encoder initialized with %dx resolution", resolution);
+    return ESP_OK;
+}
+
+esp_err_t abz_encoder_deinit(abz_encoder_t *encoder)
+{
+    if (encoder == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (encoder->mutex != NULL) {
+        SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+        vSemaphoreDelete(mutex);
+        encoder->mutex = NULL;
+    }
+
+    encoder->initialized = false;
     return ESP_OK;
 }
 
@@ -83,6 +109,16 @@ esp_err_t abz_encoder_process_quadrature(abz_encoder_t *encoder, bool a_state, b
 {
     if (encoder == NULL || !encoder->initialized) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Take mutex - blocking since this is called from task context, not ISR
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     // Encode current state: (A << 1) | B
@@ -117,6 +153,7 @@ esp_err_t abz_encoder_process_quadrature(abz_encoder_t *encoder, bool a_state, b
     // Update state
     encoder->state = current_state;
 
+    xSemaphoreGive(mutex);
     return ESP_OK;
 }
 
@@ -124,6 +161,15 @@ esp_err_t abz_encoder_process_index(abz_encoder_t *encoder, bool reset_position)
 {
     if (encoder == NULL || !encoder->initialized) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     encoder->index_detected = true;
@@ -135,6 +181,7 @@ esp_err_t abz_encoder_process_index(abz_encoder_t *encoder, bool reset_position)
         ESP_LOGI(TAG, "Index pulse detected - position preserved");
     }
 
+    xSemaphoreGive(mutex);
     return ESP_OK;
 }
 
@@ -143,7 +190,19 @@ int32_t abz_encoder_get_position(const abz_encoder_t *encoder)
     if (encoder == NULL || !encoder->initialized) {
         return 0;
     }
-    return encoder->position;
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return 0;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+
+    int32_t position = encoder->position;
+    xSemaphoreGive(mutex);
+    return position;
 }
 
 esp_err_t abz_encoder_set_position(abz_encoder_t *encoder, int32_t position)
@@ -151,7 +210,18 @@ esp_err_t abz_encoder_set_position(abz_encoder_t *encoder, int32_t position)
     if (encoder == NULL || !encoder->initialized) {
         return ESP_ERR_INVALID_STATE;
     }
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
     encoder->position = position;
+    xSemaphoreGive(mutex);
     return ESP_OK;
 }
 
@@ -165,7 +235,19 @@ bool abz_encoder_get_index_detected(const abz_encoder_t *encoder)
     if (encoder == NULL || !encoder->initialized) {
         return false;
     }
-    return encoder->index_detected;
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return false;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+
+    bool index_detected = encoder->index_detected;
+    xSemaphoreGive(mutex);
+    return index_detected;
 }
 
 esp_err_t abz_encoder_clear_index(abz_encoder_t *encoder)
@@ -173,7 +255,18 @@ esp_err_t abz_encoder_clear_index(abz_encoder_t *encoder)
     if (encoder == NULL || !encoder->initialized) {
         return ESP_ERR_INVALID_STATE;
     }
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
     encoder->index_detected = false;
+    xSemaphoreGive(mutex);
     return ESP_OK;
 }
 
@@ -182,7 +275,19 @@ abz_encoder_direction_t abz_encoder_get_direction(const abz_encoder_t *encoder)
     if (encoder == NULL || !encoder->initialized) {
         return ABZ_ENCODER_DIRECTION_FORWARD;
     }
-    return encoder->last_direction;
+
+    SemaphoreHandle_t mutex = (SemaphoreHandle_t)encoder->mutex;
+    if (mutex == NULL) {
+        return ABZ_ENCODER_DIRECTION_FORWARD;
+    }
+
+    if (xSemaphoreTake(mutex, portMAX_DELAY) != pdTRUE) {
+        return ABZ_ENCODER_DIRECTION_FORWARD;
+    }
+
+    abz_encoder_direction_t direction = encoder->last_direction;
+    xSemaphoreGive(mutex);
+    return direction;
 }
 
 int16_t abz_encoder_calculate_velocity(int32_t position_delta, uint32_t time_delta_ms)

@@ -78,14 +78,27 @@ static void IRAM_ATTR encoder_isr_handler(void* arg)
     uint32_t gpio_num = (uint32_t)arg;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     
+    // Note: esp_timer_get_time() may not be IRAM-safe on all ESP32 variants
+    // For production, consider using a simpler timestamp or IRAM-safe timer
+    uint64_t timestamp_us = 0;
+    #ifdef CONFIG_ESP_TIMER_PROFILING
+    // esp_timer_get_time() is IRAM-safe when profiling is enabled
+    timestamp_us = esp_timer_get_time();
+    #else
+    // Fallback: use 0 timestamp, task will use its own timing
+    timestamp_us = 0;
+    #endif
+    
     encoder_event_t event = {
         .gpio_num = gpio_num,
         .level = gpio_get_level(gpio_num),
-        .timestamp_us = esp_timer_get_time()
+        .timestamp_us = timestamp_us
     };
     
     // Send to queue from ISR
-    xQueueSendFromISR(s_event_queue, &event, &xHigherPriorityTaskWoken);
+    if (s_event_queue != NULL) {
+        xQueueSendFromISR(s_event_queue, &event, &xHigherPriorityTaskWoken);
+    }
     
     if (xHigherPriorityTaskWoken) {
         portYIELD_FROM_ISR();
@@ -111,18 +124,27 @@ static void encoder_task(void *pvParameters)
                 continue;
             }
             
-            // Read current GPIO states
-            bool a_state = gpio_get_level(s_config.gpio_a);
-            bool b_state = gpio_get_level(s_config.gpio_b);
-            bool z_state = gpio_get_level(s_config.gpio_z);
+            // Read current GPIO states and config with mutex protection
+            abz_encoder_config_t config_copy;
+            if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                memcpy(&config_copy, &s_config, sizeof(abz_encoder_config_t));
+                xSemaphoreGive(s_config_mutex);
+            } else {
+                // Fallback to direct access if mutex unavailable (shouldn't happen)
+                memcpy(&config_copy, &s_config, sizeof(abz_encoder_config_t));
+            }
+            
+            bool a_state = gpio_get_level(config_copy.gpio_a);
+            bool b_state = gpio_get_level(config_copy.gpio_b);
+            bool z_state = gpio_get_level(config_copy.gpio_z);
             
             // Process based on which GPIO triggered
-            if (event.gpio_num == s_config.gpio_a || event.gpio_num == s_config.gpio_b) {
+            if (event.gpio_num == config_copy.gpio_a || event.gpio_num == config_copy.gpio_b) {
                 // Quadrature signal change
                 abz_encoder_process_quadrature(&s_encoder, a_state, b_state);
-            } else if (event.gpio_num == s_config.gpio_z && z_state == 1) {
+            } else if (event.gpio_num == config_copy.gpio_z && z_state == 1) {
                 // Index pulse (rising edge)
-                abz_encoder_process_index(&s_encoder, s_config.index_reset_position);
+                abz_encoder_process_index(&s_encoder, config_copy.index_reset_position);
             }
             
             // Update assembly data periodically
@@ -138,9 +160,15 @@ static void encoder_task(void *pvParameters)
                     // Write position (bytes 61-64)
                     memcpy(&INPUT_ASSEMBLY_100[61], &position, sizeof(int32_t));
                     
-                    // Calculate velocity
+                    // Calculate velocity (read config with mutex)
+                    uint32_t velocity_interval_ms = DEFAULT_VELOCITY_INTERVAL_MS;
+                    if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
+                        velocity_interval_ms = s_config.velocity_interval_ms;
+                        xSemaphoreGive(s_config_mutex);
+                    }
+                    
                     uint64_t time_delta_us = now_us - s_last_velocity_update_us;
-                    if (time_delta_us >= (s_config.velocity_interval_ms * 1000)) {
+                    if (time_delta_us >= (velocity_interval_ms * 1000)) {
                         int32_t position_delta = position - s_last_position;
                         s_current_velocity = abz_encoder_calculate_velocity(
                             position_delta, 
@@ -173,6 +201,15 @@ static void encoder_task(void *pvParameters)
  */
 static esp_err_t configure_gpio(void)
 {
+    // Validate GPIO pin numbers
+    if (s_config.gpio_a < 0 || s_config.gpio_a > 48 ||
+        s_config.gpio_b < 0 || s_config.gpio_b > 48 ||
+        s_config.gpio_z < 0 || s_config.gpio_z > 48) {
+        ESP_LOGE(TAG, "Invalid GPIO pin numbers: A=%d, B=%d, Z=%d", 
+                 s_config.gpio_a, s_config.gpio_b, s_config.gpio_z);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     // Configure A channel (both edges)
     gpio_config_t io_conf_a = {
         .intr_type = GPIO_INTR_ANYEDGE,
@@ -181,7 +218,11 @@ static esp_err_t configure_gpio(void)
         .pull_down_en = 0,
         .pull_up_en = 1
     };
-    gpio_config(&io_conf_a);
+    esp_err_t ret = gpio_config(&io_conf_a);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure GPIO A: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     // Configure B channel (both edges)
     gpio_config_t io_conf_b = {
@@ -191,7 +232,11 @@ static esp_err_t configure_gpio(void)
         .pull_down_en = 0,
         .pull_up_en = 1
     };
-    gpio_config(&io_conf_b);
+    ret = gpio_config(&io_conf_b);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure GPIO B: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     // Configure Z channel (rising edge for index pulse)
     gpio_config_t io_conf_z = {
@@ -201,13 +246,19 @@ static esp_err_t configure_gpio(void)
         .pull_down_en = 0,
         .pull_up_en = 1
     };
-    gpio_config(&io_conf_z);
+    ret = gpio_config(&io_conf_z);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure GPIO Z: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     // Install GPIO ISR service if not already installed
-    static bool isr_service_installed = false;
-    if (!isr_service_installed) {
-        gpio_install_isr_service(0);
-        isr_service_installed = true;
+    // Note: gpio_install_isr_service() is safe to call multiple times
+    // It will return ESP_ERR_INVALID_STATE if already installed, which we can ignore
+    esp_err_t isr_ret = gpio_install_isr_service(0);
+    if (isr_ret != ESP_OK && isr_ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(isr_ret));
+        return isr_ret;
     }
     
     // Add ISR handlers
@@ -301,13 +352,16 @@ esp_err_t abz_encoder_manager_get_config(abz_encoder_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
     
-    if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        memcpy(config, &s_config, sizeof(abz_encoder_config_t));
-        xSemaphoreGive(s_config_mutex);
-        return ESP_OK;
+    if (s_config_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
     
     memcpy(config, &s_config, sizeof(abz_encoder_config_t));
+    xSemaphoreGive(s_config_mutex);
     return ESP_OK;
 }
 
@@ -346,6 +400,8 @@ esp_err_t abz_encoder_manager_reset_position(void)
 
 int16_t abz_encoder_manager_get_velocity(void)
 {
+    // s_current_velocity is updated atomically (single write operation)
+    // Reading int16_t is atomic on ESP32, so this is safe without mutex
     return s_current_velocity;
 }
 
