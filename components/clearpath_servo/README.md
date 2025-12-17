@@ -136,15 +136,16 @@ clearpath_servo_set_enable(servo, false);
 
 ## Step Generation
 
-**Note**: This driver component provides the control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task, which calls internal functions to generate steps based on velocity and acceleration profiles.
+**Note**: This driver component provides the control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task using the ESP32-P4 RMT (Remote Control) hardware peripheral.
 
 The manager component handles:
-- Step pulse generation via background task (default 5 kHz, configurable)
+- Step pulse generation via RMT hardware peripheral (precise timing, typically 10 microsecond pulse width)
+- Background task coordinates step timing (default 5 kHz, configurable)
 - Trapezoidal velocity profiles (acceleration → constant velocity → deceleration)
 - Position tracking and step counting
 - Integration with EtherNet/IP assembly data
 
-**Note**: This ESP32-P4 implementation uses software timing via FreeRTOS tasks, which limits practical step pulse rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. For higher step rates, ESP32-P4 hardware peripherals (LEDC, MCPWM, or RMT) could be used to achieve frequencies up to 40 MHz, but this would require a different implementation approach.
+**RMT Hardware Step Generation**: This implementation uses the ESP32-P4 RMT peripheral for step pulse generation, providing precise timing independent of task scheduling. RMT hardware enables accurate pulse widths and higher step rates compared to software GPIO toggling. The RMT clock divider is configured for 1 MHz resolution (1 microsecond per tick), allowing precise control of step pulse timing.
 
 ## HLFB Modes
 
@@ -172,10 +173,12 @@ See `components/clearpath_servo_manager/README.md` for integration details.
 ## Limitations
 
 - Position counter is 32-bit signed integer (±2,147,483,647 steps)
-- Step generation frequency depends on FreeRTOS task scheduling
-- **Maximum step rate**: ESP32-P4 software timing limits practical rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require different implementation
+- Step generation uses RMT hardware peripheral for precise pulse timing
+- Step pulse width: 10 microseconds (configurable via RMT)
+- Step generation frequency depends on FreeRTOS task scheduling (default 5 kHz)
+- **Maximum step rate**: Limited by task frequency and RMT configuration. RMT hardware enables higher rates than software GPIO toggling
 - Acceleration/deceleration profiles are simplified (trapezoidal)
-- No hardware timer-based step generation (software timing only)
+- RMT hardware provides accurate pulse timing independent of CPU load
 
 ## Future Enhancements
 
@@ -195,6 +198,6 @@ This implementation is inspired by and follows the API design patterns of the Te
 - [ClearCore Library Documentation](https://teknic-inc.github.io/ClearCore-library/) - API reference
 - [ClearCore Step and Direction Control](https://teknic-inc.github.io/ClearCore-library/_move_gen.html) - Step generation concepts
 - [ClearPath Servo User Manual](https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf) - Hardware specifications
+- ESP32-P4 RMT (Remote Control) API documentation - Hardware step pulse generation
 - ESP32-P4 GPIO API documentation
-- ESP32-P4 LEDC/MCPWM/RMT peripherals for high-frequency step generation
 - FreeRTOS task and mutex documentation

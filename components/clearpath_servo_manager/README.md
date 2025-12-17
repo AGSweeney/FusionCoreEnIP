@@ -207,25 +207,29 @@ uint8_t count = clearpath_servo_manager_get_count();
 
 ## Step Generation
 
-**Maximum Step Rate**: This ESP32-P4 implementation uses software timing via FreeRTOS tasks, which limits practical step pulse rates to approximately **1-10 kHz** depending on:
-- Task priority and scheduling
-- System load from other tasks
-- GPIO toggle speed
-- CPU frequency
+**Step Generation**: This ESP32-P4 implementation uses the RMT (Remote Control) hardware peripheral for step pulse generation, providing precise timing independent of task scheduling.
 
-For higher step rates, consider:
-- Using ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) for step generation
-- Increasing task priority
-- Reducing other system load
-- Using dedicated hardware step generation ICs
+**RMT Configuration**:
+- RMT clock divider: 80 (1 MHz resolution, 1 microsecond per tick)
+- Step pulse width: 10 microseconds (configurable)
+- Precise hardware timing for accurate step pulses
+
+**Step Rate**: Step generation frequency depends on:
+- Task priority and scheduling (default 5 kHz task frequency)
+- System load from other tasks
+- RMT hardware capabilities (much higher than software GPIO toggling)
+
+The RMT hardware peripheral enables accurate step pulse generation with precise timing, independent of CPU load and task scheduling delays.
 
 The manager component includes a background task (default 5 kHz, configurable) that:
 
 1. Reads commands from Output Assembly 150
-2. Generates step pulses based on velocity/acceleration profiles
+2. Generates step pulses using RMT hardware peripheral based on velocity/acceleration profiles
 3. Updates position tracking
 4. Monitors HLFB for status feedback
 5. Writes status/feedback to Input Assembly 100
+
+**RMT Hardware**: Step pulses are generated using the ESP32-P4 RMT peripheral, which provides precise timing (typically 10 microsecond pulse width) independent of task scheduling and CPU load.
 
 ### Velocity Profiles
 
@@ -258,16 +262,17 @@ To enable this component:
 
 ## Limitations
 
-- Step generation uses software timing (no hardware timers)
-- Maximum step rate limited by task frequency and GPIO toggle speed
-- **Maximum step rate**: ESP32-P4 software timing limits practical rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require different implementation
+- Step generation uses RMT hardware peripheral for precise timing
+- Maximum step rate limited by task frequency and RMT configuration
 - Position tracking is 32-bit signed integer (±2,147,483,647 steps)
 - Assembly data layout supports 1-2 servos fully (may need expansion for 4 servos)
 - Trapezoidal velocity profiles only (no S-curve acceleration)
+- RMT channel allocation: Up to 8 RMT channels available (one per servo)
 
 ## Future Enhancements
 
-- ESP32-P4 hardware peripheral-based step generation (LEDC, MCPWM, or RMT) for higher precision and rates up to 40 MHz
+- Variable RMT pulse width configuration
+- Higher frequency step generation using optimized RMT settings
 - S-curve acceleration profiles
 - Support for all 4 servos in assembly data
 - Limit switch support

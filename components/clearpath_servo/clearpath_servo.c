@@ -39,13 +39,14 @@
  * - Teknic ClearCore Library: https://github.com/Teknic-Inc/ClearCore-library
  * - ClearCore Step and Direction API: https://teknic-inc.github.io/ClearCore-library/_move_gen.html
  * - ClearPath Servo User Manual: https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf
- * - ESP32-P4 LEDC/MCPWM/RMT peripherals for high-frequency step generation
+ * - ESP32-P4 RMT (Remote Control) API: Hardware step pulse generation
  */
 
 #include "clearpath_servo.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "driver/rmt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -53,6 +54,15 @@
 #include <stdlib.h>
 
 static const char *TAG = "clearpath_servo";
+
+// RMT configuration constants
+#define RMT_CLK_DIV 80  // 80 MHz / 80 = 1 MHz (1 us resolution)
+#define STEP_PULSE_WIDTH_TICKS 10  // 10 microseconds pulse width
+#define RMT_TX_QUEUE_SIZE 0  // No queue needed for simple pulse generation
+
+// Static RMT channel allocation (ESP32-P4 has multiple RMT channels)
+static uint8_t s_rmt_channel_counter = 0;
+#define MAX_RMT_CHANNELS 8  // ESP32-P4 typically has 8 RMT channels
 
 /**
  * @brief Servo state
@@ -78,6 +88,8 @@ struct clearpath_servo_handle_s {
     bool enabled;
     SemaphoreHandle_t mutex;
     bool initialized;
+    rmt_channel_t rmt_channel;  // RMT channel for step pulse generation
+    rmt_item32_t step_pulse_item;  // Pre-configured RMT pulse item
 };
 
 esp_err_t clearpath_servo_init(const clearpath_servo_config_t *config, clearpath_servo_handle_t **handle_out)
@@ -124,17 +136,58 @@ esp_err_t clearpath_servo_init(const clearpath_servo_config_t *config, clearpath
         return ESP_ERR_NO_MEM;
     }
 
-    // Configure GPIO pins
+    // Allocate RMT channel for step pulse generation
+    if (s_rmt_channel_counter >= MAX_RMT_CHANNELS) {
+        ESP_LOGE(TAG, "No available RMT channels");
+        vSemaphoreDelete(handle->mutex);
+        free(handle);
+        return ESP_ERR_NO_MEM;
+    }
+    handle->rmt_channel = (rmt_channel_t)s_rmt_channel_counter++;
+    
+    // Configure RMT for step pulse generation
+    rmt_config_t rmt_config = RMT_DEFAULT_CONFIG_TX((gpio_num_t)config->gpio_step, handle->rmt_channel);
+    rmt_config.clk_div = RMT_CLK_DIV;  // 1 MHz clock (1 us resolution)
+    rmt_config.tx_config.loop_en = false;
+    rmt_config.tx_config.carrier_en = false;
+    rmt_config.tx_config.idle_output_en = true;
+    rmt_config.tx_config.idle_level = RMT_IDLE_LEVEL_LOW;
+    
+    esp_err_t ret = rmt_config(&rmt_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure RMT channel %d", handle->rmt_channel);
+        vSemaphoreDelete(handle->mutex);
+        free(handle);
+        return ret;
+    }
+    
+    ret = rmt_driver_install(handle->rmt_channel, RMT_TX_QUEUE_SIZE, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to install RMT driver for channel %d", handle->rmt_channel);
+        vSemaphoreDelete(handle->mutex);
+        free(handle);
+        return ret;
+    }
+    
+    // Pre-configure step pulse item: HIGH for STEP_PULSE_WIDTH_TICKS, then return to idle (LOW)
+    // RMT will automatically return to idle level after the item completes
+    handle->step_pulse_item.level0 = 1;
+    handle->step_pulse_item.duration0 = STEP_PULSE_WIDTH_TICKS;
+    handle->step_pulse_item.level1 = 0;
+    handle->step_pulse_item.duration1 = 1;  // Minimum duration, RMT returns to idle after item
+    
+    // Configure direction GPIO (still uses regular GPIO)
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << config->gpio_step) | (1ULL << config->gpio_dir),
+        .pin_bit_mask = (1ULL << config->gpio_dir),
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE,
     };
-    esp_err_t ret = gpio_config(&io_conf);
+    ret = gpio_config(&io_conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure step/dir GPIO");
+        ESP_LOGE(TAG, "Failed to configure dir GPIO");
+        rmt_driver_uninstall(handle->rmt_channel);
         vSemaphoreDelete(handle->mutex);
         free(handle);
         return ret;
@@ -170,7 +223,6 @@ esp_err_t clearpath_servo_init(const clearpath_servo_config_t *config, clearpath
     }
 
     // Initialize GPIO states
-    gpio_set_level(config->gpio_step, 0);
     gpio_set_level(config->gpio_dir, 0);
 
     *handle_out = handle;
@@ -193,6 +245,11 @@ esp_err_t clearpath_servo_deinit(clearpath_servo_handle_t *handle)
 
     // Wait a bit for any in-flight operations to complete
     vTaskDelay(pdMS_TO_TICKS(10));
+
+    // Uninstall RMT driver
+    if (handle->initialized) {
+        rmt_driver_uninstall(handle->rmt_channel);
+    }
 
     // Delete mutex and free handle
     if (handle->mutex != NULL) {
@@ -368,6 +425,32 @@ esp_err_t clearpath_servo_increment_position(clearpath_servo_handle_t *handle, i
     }
 
     xSemaphoreGive(handle->mutex);
+    return ESP_OK;
+}
+
+/**
+ * @brief Generate a step pulse using RMT
+ * 
+ * Internal function for step generation. Generates a precise step pulse
+ * using the RMT peripheral for accurate timing.
+ * 
+ * @param handle Servo handle
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_generate_step_pulse(clearpath_servo_handle_t *handle)
+{
+    if (handle == NULL || !handle->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Generate step pulse using RMT
+    // The pulse item is pre-configured: HIGH for STEP_PULSE_WIDTH_TICKS, then LOW
+    esp_err_t ret = rmt_write_items(handle->rmt_channel, &handle->step_pulse_item, 1, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to generate RMT step pulse");
+        return ret;
+    }
+
     return ESP_OK;
 }
 

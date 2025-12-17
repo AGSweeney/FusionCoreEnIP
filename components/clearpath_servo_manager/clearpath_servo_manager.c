@@ -18,14 +18,13 @@
  * 5. Status/feedback written to Input Assembly 100 (bytes 61-71)
  * 
  * Step Generation:
- * - Background task generates step pulses (default 5 kHz, configurable)
+ * - Background task generates step pulses using RMT hardware peripheral
+ * - RMT provides precise timing (typically 10 microsecond pulse width)
  * - Trapezoidal velocity profile (accel → constant → decel)
  * - Updates position counter on each step
  * - Checks move completion based on position and HLFB
- * - Note: ESP32-P4 software timing limits practical step rates to ~1-10 kHz
- *   depending on system load, task priority, and GPIO toggle speed.
- *   ESP32-P4 hardware peripherals (LEDC, MCPWM, RMT) could achieve much
- *   higher rates (up to 40 MHz with LEDC) but require different implementation
+ * - RMT hardware enables higher step rates than software GPIO toggling
+ *   (practical rates depend on task frequency and RMT configuration)
  * 
  * Assembly Data Layout:
  * - Output Assembly 150, Bytes 32-39: Servo commands (2 bytes per servo)
@@ -64,8 +63,8 @@ static const char *TAG = "clearpath_servo_manager";
 
 #define STEP_GENERATION_TASK_FREQ_HZ 5000  // 5 kHz step generation frequency
 #define STEP_GENERATION_TASK_INTERVAL_US (1000000 / STEP_GENERATION_TASK_FREQ_HZ)
-#define STEP_PULSE_WIDTH_US 10  // Step pulse width in microseconds
 #define ASSEMBLY_UPDATE_INTERVAL_MS 10  // Update assembly data every 10ms
+// Note: Step pulse width is now controlled by RMT hardware (typically 10 microseconds)
 
 // Servo instance structure
 typedef struct {
@@ -91,9 +90,9 @@ static SemaphoreHandle_t s_config_mutex = NULL;
 #define DEFAULT_ACCEL_MAX      10000
 
 /**
- * @brief Generate step pulse for a servo
+ * @brief Generate step pulse for a servo using RMT
  * 
- * This function generates a single step pulse and updates position.
+ * This function generates a single step pulse using RMT hardware and updates position.
  * Called from the step generation task.
  */
 static void generate_step(servo_instance_t *servo)
@@ -102,14 +101,13 @@ static void generate_step(servo_instance_t *servo)
         return;
     }
 
-    // Generate step pulse: LOW → HIGH → LOW
-    gpio_set_level(servo->config.gpio_step, 1);
-    // Small delay for pulse width (using busy wait for precise timing)
-    uint64_t start_us = esp_timer_get_time();
-    while ((esp_timer_get_time() - start_us) < STEP_PULSE_WIDTH_US) {
-        // Busy wait for precise timing
+    // Generate step pulse using RMT hardware peripheral
+    // RMT provides precise timing (typically 10 microseconds pulse width)
+    esp_err_t ret = clearpath_servo_generate_step_pulse(servo->handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to generate step pulse for servo");
+        return;
     }
-    gpio_set_level(servo->config.gpio_step, 0);
 
     // Update position based on direction
     // Direction GPIO: HIGH = forward (positive), LOW = reverse (negative)
@@ -125,12 +123,11 @@ static void generate_step(servo_instance_t *servo)
  * @brief Step generation task
  * 
  * This task runs at configurable frequency (default 5 kHz) to generate step pulses
- * based on velocity and acceleration profiles.
+ * based on velocity and acceleration profiles. Step pulses are generated using the
+ * RMT hardware peripheral for precise timing.
  * 
- * Note: ESP32-P4 software timing limits practical step rates to ~1-10 kHz depending
- * on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals
- * (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require
- * different implementation.
+ * RMT hardware provides accurate pulse timing independent of task scheduling,
+ * enabling higher step rates than software GPIO toggling.
  */
 static void step_generation_task(void *pvParameters)
 {

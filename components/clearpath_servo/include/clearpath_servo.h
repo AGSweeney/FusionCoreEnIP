@@ -184,6 +184,17 @@ esp_err_t clearpath_servo_set_position(clearpath_servo_handle_t *handle, int32_t
 esp_err_t clearpath_servo_increment_position(clearpath_servo_handle_t *handle, int32_t delta);
 
 /**
+ * @brief Generate a step pulse using RMT hardware peripheral
+ * 
+ * Internal function for step generation. Generates a precise step pulse
+ * using the RMT peripheral for accurate timing (typically 10 microseconds).
+ * 
+ * @param handle Servo handle
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_generate_step_pulse(clearpath_servo_handle_t *handle);
+
+/**
  * @brief Reset position to zero
  * 
  * @param handle Servo handle
