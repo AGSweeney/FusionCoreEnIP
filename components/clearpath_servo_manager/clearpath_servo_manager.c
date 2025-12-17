@@ -18,10 +18,14 @@
  * 5. Status/feedback written to Input Assembly 100 (bytes 61-71)
  * 
  * Step Generation:
- * - High-frequency task (1-10 kHz) generates step pulses
+ * - Background task generates step pulses (default 5 kHz, configurable)
  * - Trapezoidal velocity profile (accel → constant → decel)
  * - Updates position counter on each step
  * - Checks move completion based on position and HLFB
+ * - Note: ESP32-P4 software timing limits practical step rates to ~1-10 kHz
+ *   depending on system load, task priority, and GPIO toggle speed.
+ *   ESP32-P4 hardware peripherals (LEDC, MCPWM, RMT) could achieve much
+ *   higher rates (up to 40 MHz with LEDC) but require different implementation
  * 
  * Assembly Data Layout:
  * - Output Assembly 150, Bytes 32-39: Servo commands (2 bytes per servo)
@@ -120,8 +124,13 @@ static void generate_step(servo_instance_t *servo)
 /**
  * @brief Step generation task
  * 
- * This task runs at high frequency (5 kHz) to generate step pulses
+ * This task runs at configurable frequency (default 5 kHz) to generate step pulses
  * based on velocity and acceleration profiles.
+ * 
+ * Note: ESP32-P4 software timing limits practical step rates to ~1-10 kHz depending
+ * on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals
+ * (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require
+ * different implementation.
  */
 static void step_generation_task(void *pvParameters)
 {

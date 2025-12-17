@@ -39,6 +39,7 @@
  * - Teknic ClearCore Library: https://github.com/Teknic-Inc/ClearCore-library
  * - ClearCore Step and Direction API: https://teknic-inc.github.io/ClearCore-library/_move_gen.html
  * - ClearPath Servo User Manual: https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf
+ * - ESP32-P4 LEDC/MCPWM/RMT peripherals for high-frequency step generation
  */
 
 #include "clearpath_servo.h"

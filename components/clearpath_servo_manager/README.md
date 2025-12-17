@@ -7,7 +7,7 @@ This component manages multiple ClearPath servos, generates step pulses, monitor
 ## Features
 
 - **Multi-Servo Support**: Manages up to 4 ClearPath servos
-- **Step Generation**: High-frequency background task (5 kHz) generates step pulses
+- **Step Generation**: Background task generates step pulses (default 5 kHz, configurable)
 - **Velocity Profiles**: Trapezoidal acceleration/deceleration profiles
 - **HLFB Monitoring**: Reads High Level Feedback for status information
 - **Assembly Integration**: Reads commands from Output Assembly 150, writes feedback to Input Assembly 100
@@ -25,7 +25,7 @@ ClearPath Servo → HLFB GPIO → Manager Task → Status → Input Assembly 100
 
 ### Component Structure
 
-1. **Background Task**: High-frequency task (5 kHz) generates step pulses
+1. **Background Task**: Background task generates step pulses (default 5 kHz, configurable)
 2. **Step Generation**: Trapezoidal velocity profiles with acceleration/deceleration
 3. **Position Tracking**: Updates position counter based on step count
 4. **HLFB Monitoring**: Reads HLFB GPIO for status feedback
@@ -116,7 +116,7 @@ GND              ------> GND (Pin 7)                          GND
 
 ### Power Connections
 
-- ESP32: 3.3V logic supply
+- ESP32-P4: 3.3V logic supply
 - SN74AHCT14: VCC (Pin 14) = 5V, GND (Pin 7) = Ground
 - ClearPath Servo: Requires appropriate motor power supply (typically 24-75V DC)
 
@@ -136,7 +136,7 @@ GND              ------> GND (Pin 7)                          GND
 1. **Direct Connection (if GPIO is 5V tolerant)**:
    - HLFB+ → ESP32 GPIO (with pull-down resistor recommended)
    - HLFB- → GND
-   - Verify ESP32 GPIO is 5V tolerant for selected pin
+   - Verify ESP32-P4 GPIO is 5V tolerant for selected pin
 
 2. **Level Shifter (Recommended)**:
    - Use SN74LVC1T45, TXB0104, or similar bidirectional level shifter
@@ -207,7 +207,19 @@ uint8_t count = clearpath_servo_manager_get_count();
 
 ## Step Generation
 
-The manager component includes a high-frequency background task (5 kHz) that:
+**Maximum Step Rate**: This ESP32-P4 implementation uses software timing via FreeRTOS tasks, which limits practical step pulse rates to approximately **1-10 kHz** depending on:
+- Task priority and scheduling
+- System load from other tasks
+- GPIO toggle speed
+- CPU frequency
+
+For higher step rates, consider:
+- Using ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) for step generation
+- Increasing task priority
+- Reducing other system load
+- Using dedicated hardware step generation ICs
+
+The manager component includes a background task (default 5 kHz, configurable) that:
 
 1. Reads commands from Output Assembly 150
 2. Generates step pulses based on velocity/acceleration profiles
@@ -241,20 +253,21 @@ To enable this component:
 - `clearpath_servo` - Driver component
 - `opener` - EtherNet/IP assembly access
 - `system_config` - Configuration management
-- `driver` - ESP-IDF GPIO driver
+- `driver` - ESP-IDF GPIO driver (ESP32-P4)
 - `freertos` - FreeRTOS tasks and synchronization
 
 ## Limitations
 
 - Step generation uses software timing (no hardware timers)
 - Maximum step rate limited by task frequency and GPIO toggle speed
+- **Maximum step rate**: ESP32-P4 software timing limits practical rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require different implementation
 - Position tracking is 32-bit signed integer (±2,147,483,647 steps)
 - Assembly data layout supports 1-2 servos fully (may need expansion for 4 servos)
 - Trapezoidal velocity profiles only (no S-curve acceleration)
 
 ## Future Enhancements
 
-- Hardware timer-based step generation for higher precision
+- ESP32-P4 hardware peripheral-based step generation (LEDC, MCPWM, or RMT) for higher precision and rates up to 40 MHz
 - S-curve acceleration profiles
 - Support for all 4 servos in assembly data
 - Limit switch support

@@ -20,7 +20,7 @@ This component provides step and direction control for Teknic ClearPath servos, 
 
 ### Level Shifting
 
-**Important**: ESP32 GPIO outputs are 3.3V logic, which may not reliably drive ClearPath servo inputs. Level shifting is required using a device such as SN74AHCT14 (hex inverting Schmitt trigger) or similar level shifter to convert 3.3V logic to 5V logic levels that ClearPath servos expect.
+**Important**: ESP32-P4 GPIO outputs are 3.3V logic, which may not reliably drive ClearPath servo inputs. Level shifting is required using a device such as SN74AHCT14 (hex inverting Schmitt trigger) or similar level shifter to convert 3.3V logic to 5V logic levels that ClearPath servos expect.
 
 See the hookup schematic in `clearpath_servo_manager` component documentation for connection details.
 
@@ -139,10 +139,12 @@ clearpath_servo_set_enable(servo, false);
 **Note**: This driver component provides the control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task, which calls internal functions to generate steps based on velocity and acceleration profiles.
 
 The manager component handles:
-- High-frequency step pulse generation (1-10 kHz)
+- Step pulse generation via background task (default 5 kHz, configurable)
 - Trapezoidal velocity profiles (acceleration → constant velocity → deceleration)
 - Position tracking and step counting
 - Integration with EtherNet/IP assembly data
+
+**Note**: This ESP32-P4 implementation uses software timing via FreeRTOS tasks, which limits practical step pulse rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. For higher step rates, ESP32-P4 hardware peripherals (LEDC, MCPWM, or RMT) could be used to achieve frequencies up to 40 MHz, but this would require a different implementation approach.
 
 ## HLFB Modes
 
@@ -171,7 +173,7 @@ See `components/clearpath_servo_manager/README.md` for integration details.
 
 - Position counter is 32-bit signed integer (±2,147,483,647 steps)
 - Step generation frequency depends on FreeRTOS task scheduling
-- Maximum step rate limited by GPIO toggle speed and task frequency
+- **Maximum step rate**: ESP32-P4 software timing limits practical rates to approximately **1-10 kHz** depending on system load, task priority, and GPIO toggle speed. ESP32-P4 hardware peripherals (LEDC up to 40 MHz, MCPWM, or RMT) could achieve much higher rates but require different implementation
 - Acceleration/deceleration profiles are simplified (trapezoidal)
 - No hardware timer-based step generation (software timing only)
 
@@ -193,5 +195,6 @@ This implementation is inspired by and follows the API design patterns of the Te
 - [ClearCore Library Documentation](https://teknic-inc.github.io/ClearCore-library/) - API reference
 - [ClearCore Step and Direction Control](https://teknic-inc.github.io/ClearCore-library/_move_gen.html) - Step generation concepts
 - [ClearPath Servo User Manual](https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf) - Hardware specifications
-- ESP32 GPIO API documentation
+- ESP32-P4 GPIO API documentation
+- ESP32-P4 LEDC/MCPWM/RMT peripherals for high-frequency step generation
 - FreeRTOS task and mutex documentation
