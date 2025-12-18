@@ -74,6 +74,24 @@ typedef enum {
 } clearpath_servo_hlfb_mode_t;
 
 /**
+ * @brief Homing sensor type
+ */
+typedef enum {
+    CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_OPEN = 0,   /**< NO: Sensor triggers when closed (HIGH) */
+    CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_CLOSED = 1  /**< NC: Sensor triggers when opened (LOW) */
+} clearpath_servo_homing_sensor_type_t;
+
+/**
+ * @brief Servo state
+ */
+typedef enum {
+    CLEARPATH_SERVO_STATE_IDLE = 0,
+    CLEARPATH_SERVO_STATE_MOVING,
+    CLEARPATH_SERVO_STATE_VELOCITY_MODE,
+    CLEARPATH_SERVO_STATE_HOMING
+} clearpath_servo_state_t;
+
+/**
  * @brief Servo configuration structure
  */
 typedef struct {
@@ -81,10 +99,13 @@ typedef struct {
     int gpio_dir;           /**< GPIO pin for direction signal */
     int gpio_enable;        /**< GPIO pin for enable signal (-1 if not used) */
     int gpio_hlfb;          /**< GPIO pin for HLFB feedback (-1 if not used) */
+    int gpio_homing_sensor; /**< GPIO pin for homing sensor (-1 if not used) */
     uint32_t vel_max;       /**< Maximum velocity in steps per second */
     uint32_t accel_max;     /**< Maximum acceleration in steps per second squared */
     clearpath_servo_hlfb_mode_t hlfb_mode; /**< HLFB interpretation mode */
     bool hlfb_active_high;   /**< HLFB active high (true) or active low (false) */
+    clearpath_servo_homing_sensor_type_t homing_sensor_type; /**< Homing sensor type (NO/NC) */
+    uint32_t homing_velocity; /**< Homing velocity in steps per second (0 = use vel_max) */
 } clearpath_servo_config_t;
 
 /**
@@ -266,6 +287,95 @@ bool clearpath_servo_is_fault(clearpath_servo_handle_t *handle);
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t clearpath_servo_set_enable(clearpath_servo_handle_t *handle, bool enable);
+
+/**
+ * @brief Start homing move
+ * 
+ * Moves the servo at homing velocity until the homing sensor is triggered.
+ * When sensor triggers, motion stops and position is set to 0.
+ * 
+ * @param handle Servo handle
+ * @param direction Direction to move (positive = forward, negative = reverse)
+ * @param timeout_ms Maximum time to wait for sensor trigger (0 = no timeout)
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if homing sensor not configured,
+ *                   ESP_ERR_TIMEOUT if timeout reached before sensor trigger
+ */
+esp_err_t clearpath_servo_home(clearpath_servo_handle_t *handle, int32_t direction, uint32_t timeout_ms);
+
+/**
+ * @brief Check if homing is complete
+ * 
+ * @param handle Servo handle
+ * @return true if homing is complete (sensor triggered and position set to 0)
+ */
+bool clearpath_servo_is_homing_complete(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get homing sensor status
+ * 
+ * @param handle Servo handle
+ * @return true if sensor is triggered (based on sensor type: NO=HIGH, NC=LOW)
+ */
+bool clearpath_servo_get_homing_sensor_status(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Check if homing timeout has been reached
+ * 
+ * @param handle Servo handle
+ * @return true if timeout reached, false otherwise
+ */
+bool clearpath_servo_is_homing_timeout(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get target position
+ * 
+ * @param handle Servo handle
+ * @return int32_t Target position in steps
+ */
+int32_t clearpath_servo_get_target_position(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get target velocity
+ * 
+ * @param handle Servo handle
+ * @return int32_t Target velocity in steps per second
+ */
+int32_t clearpath_servo_get_target_velocity(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get maximum velocity
+ * 
+ * @param handle Servo handle
+ * @return uint32_t Maximum velocity in steps per second
+ */
+uint32_t clearpath_servo_get_vel_max(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get maximum acceleration
+ * 
+ * @param handle Servo handle
+ * @return uint32_t Maximum acceleration in steps per second squared
+ */
+uint32_t clearpath_servo_get_accel_max(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get servo state
+ * 
+ * @param handle Servo handle
+ * @return clearpath_servo_state_t Current servo state (IDLE, MOVING, VELOCITY_MODE)
+ */
+clearpath_servo_state_t clearpath_servo_get_state(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Set current velocity (for trapezoidal profile tracking)
+ * 
+ * Internal function for step generation task to update velocity during motion.
+ * 
+ * @param handle Servo handle
+ * @param velocity Current velocity in steps per second
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_set_current_velocity(clearpath_servo_handle_t *handle, int32_t velocity);
 
 #ifdef __cplusplus
 }

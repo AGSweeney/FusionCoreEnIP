@@ -36,6 +36,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "driver/pcnt.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,21 +64,24 @@ typedef enum {
 typedef struct {
     int32_t position;              /**< Current position count (signed 32-bit) */
     abz_encoder_resolution_t resolution; /**< Resolution mode (1x or 4x) */
-    uint8_t state;                 /**< Current quadrature state (0-3) */
     bool index_detected;           /**< Index pulse detected flag */
     abz_encoder_direction_t last_direction; /**< Last movement direction */
     bool initialized;              /**< Initialization flag */
     void *mutex;                   /**< Mutex for thread-safe access (internal) */
+    pcnt_unit_handle_t pcnt_unit;  /**< PCNT unit handle for hardware quadrature decoding */
+    int32_t pcnt_offset;          /**< Offset to track position changes from PCNT */
 } abz_encoder_t;
 
 /**
- * @brief Initialize encoder handle
+ * @brief Initialize encoder handle with PCNT hardware
  * 
  * @param encoder Pointer to encoder handle structure
  * @param resolution Resolution mode (1x or 4x)
+ * @param gpio_a GPIO pin for A channel
+ * @param gpio_b GPIO pin for B channel
  * @return esp_err_t ESP_OK on success
  */
-esp_err_t abz_encoder_init(abz_encoder_t *encoder, abz_encoder_resolution_t resolution);
+esp_err_t abz_encoder_init(abz_encoder_t *encoder, abz_encoder_resolution_t resolution, int gpio_a, int gpio_b);
 
 /**
  * @brief Deinitialize encoder handle and free resources
@@ -88,18 +92,15 @@ esp_err_t abz_encoder_init(abz_encoder_t *encoder, abz_encoder_resolution_t reso
 esp_err_t abz_encoder_deinit(abz_encoder_t *encoder);
 
 /**
- * @brief Process quadrature state change
+ * @brief Update position from PCNT hardware counter
  * 
- * This function should be called from the interrupt handler or task
- * when A or B channel changes state. It decodes the quadrature signal
- * and updates the position counter.
+ * This function reads the PCNT hardware counter and updates the position.
+ * Should be called periodically to sync software position with hardware counter.
  * 
  * @param encoder Pointer to encoder handle
- * @param a_state Current A channel state (0 or 1)
- * @param b_state Current B channel state (0 or 1)
  * @return esp_err_t ESP_OK on success
  */
-esp_err_t abz_encoder_process_quadrature(abz_encoder_t *encoder, bool a_state, bool b_state);
+esp_err_t abz_encoder_update_position(abz_encoder_t *encoder);
 
 /**
  * @brief Process index pulse

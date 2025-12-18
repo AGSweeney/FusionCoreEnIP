@@ -35,20 +35,31 @@ ClearPath Servo → HLFB GPIO → Manager Task → Status → Input Assembly 100
 
 ### Output Assembly 150 (Control Commands)
 
-**Bytes 32-39: Servo Commands (8 bytes, supports 4 servos)**
+**Bytes 32-51: Servo Commands (20 bytes total, 5 bytes per servo, supports 4 servos)**
 
 | Byte Range | Servo | Field | Type | Description |
 |------------|-------|-------|------|-------------|
-| 32-33 | Servo 0 | Command | uint16_t | Command type and data |
-| 34-35 | Servo 1 | Command | uint16_t | Command type and data |
-| 36-37 | Servo 2 | Command | uint16_t | Command type and data |
-| 38-39 | Servo 3 | Command | uint16_t | Command type and data |
+| 32 | Servo 0 | Command Type | uint8_t | Command type (see below) |
+| 33-36 | Servo 0 | Value | int32_t | Position (move_abs/move_rel) or velocity (move_velocity) |
+| 37 | Servo 1 | Command Type | uint8_t | Command type |
+| 38-41 | Servo 1 | Value | int32_t | Position or velocity |
+| 42 | Servo 2 | Command Type | uint8_t | Command type |
+| 43-46 | Servo 2 | Value | int32_t | Position or velocity |
+| 47 | Servo 3 | Command Type | uint8_t | Command type |
+| 48-51 | Servo 3 | Value | int32_t | Position or velocity |
 
-**Command Format (2 bytes per servo):**
-- Byte 0: Command type (0=stop, 1=move_abs, 2=move_rel, 3=move_vel)
-- Byte 1: Reserved/data
+**Command Types:**
+- 0: Stop - Value field ignored
+- 1: Move Absolute - Value is target position (int32_t, steps)
+- 2: Move Relative - Value is relative steps (int32_t, steps)
+- 3: Move Velocity - Value is target velocity (int32_t, steps/second)
+- 4: Enable - Value field ignored
+- 5: Disable - Value field ignored
+- 6: Home - Value format: lower 16 bits = direction (int16_t, positive=forward, negative=reverse), upper 16 bits = timeout_ms (uint16_t, 0=no timeout)
 
-**Note**: For more detailed control, the Output Assembly may need to be expanded to support 4 bytes per servo (position/velocity commands).
+**Note**: All values are little-endian int32_t, providing full 32-bit range for positions and velocities (±2,147,483,647 steps or steps/second).
+
+**Assembly Size Note**: Output Assembly 150 is currently 40 bytes (`g_assembly_data096[40]`), which supports 1 servo fully (bytes 32-36). For 4 servos with full 32-bit range, the assembly needs to be expanded to at least 52 bytes (bytes 32-51). The code includes bounds checking to prevent reading beyond the current assembly size.
 
 ### Input Assembly 100 (Status/Feedback)
 
@@ -126,10 +137,11 @@ GND              ------> GND (Pin 7)                          GND
 - If non-inverting level shifter is used (e.g., SN74AHCT125), connect directly without inversion
 - Each servo requires:
   - 3-4 GPIO outputs: Step, Direction, Enable (optional)
-  - 1 GPIO input: HLFB (High Level Feedback)
-- For 4 servos: 12-16 GPIO outputs + 4 GPIO inputs = 16-20 GPIO pins total
+  - 1-2 GPIO inputs: HLFB (High Level Feedback), Homing Sensor (optional)
+- For 4 servos: 12-16 GPIO outputs + 4-8 GPIO inputs = 16-24 GPIO pins total
 - Enable pin is optional - can be tied high if not used
 - HLFB is highly recommended for status monitoring and move completion detection
+- Homing sensor is optional but required for homing operations
 
 ### HLFB Connection Options
 
@@ -147,6 +159,7 @@ GND              ------> GND (Pin 7)                          GND
    - Configure HLFB mode via Teknic Motion Studio (MSP) software
    - Common modes: Enabled, Move Complete, In Position, Fault
    - HLFB can be configured as active-high or active-low
+   - See `components/clearpath_servo/README.md` for detailed HLFB mode descriptions
 
 ## Configuration
 
@@ -158,10 +171,13 @@ gpio_step = 8
 gpio_dir = 9
 gpio_enable = 10
 gpio_hlfb = 11
+gpio_homing_sensor = -1  // Not configured by default
 vel_max = 1000 steps/second
 accel_max = 10000 steps/second²
 hlfb_mode = CLEARPATH_SERVO_HLFB_MODE_MOVE_COMPLETE
 hlfb_active_high = true
+homing_sensor_type = CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_OPEN
+homing_velocity = 0  // 0 = use vel_max
 ```
 
 ### Configuration via NVS
@@ -203,42 +219,86 @@ bool in_position = (status & 0x08) != 0;
 
 // Get number of initialized servos
 uint8_t count = clearpath_servo_manager_get_count();
+
+// Homing operations
+// Start homing move (forward direction, 5 second timeout)
+clearpath_servo_manager_home(0, 1, 5000);
+
+// Check if homing is complete
+bool homing_done = clearpath_servo_manager_is_homing_complete(0);
+
+// Check homing sensor status
+bool sensor_triggered = clearpath_servo_manager_get_homing_sensor_status(0);
 ```
 
 ## Step Generation
 
-**Step Generation**: This ESP32-P4 implementation uses the RMT (Remote Control) hardware peripheral for step pulse generation, providing precise timing independent of task scheduling.
+This implementation uses the ESP32-P4 RMT (Remote Control) hardware peripheral for step pulse generation, providing precise timing independent of task scheduling.
 
-**RMT Configuration**:
-- RMT clock divider: 80 (1 MHz resolution, 1 microsecond per tick)
-- Step pulse width: 10 microseconds (configurable)
-- Precise hardware timing for accurate step pulses
+### RMT Hardware Configuration
 
-**Step Rate**: Step generation frequency depends on:
-- Task priority and scheduling (default 5 kHz task frequency)
-- System load from other tasks
-- RMT hardware capabilities (much higher than software GPIO toggling)
+- **Clock divider**: 80 (1 MHz resolution, 1 microsecond per tick)
+- **Step pulse width**: 10 microseconds (configurable)
+- **Precise hardware timing**: Accurate pulse generation independent of CPU load
 
-The RMT hardware peripheral enables accurate step pulse generation with precise timing, independent of CPU load and task scheduling delays.
+### Step Generation Task
 
-The manager component includes a background task (default 5 kHz, configurable) that:
+The manager includes a background task (default 5 kHz, configurable) that:
 
 1. Reads commands from Output Assembly 150
-2. Generates step pulses using RMT hardware peripheral based on velocity/acceleration profiles
+2. Generates step pulses using RMT hardware based on velocity/acceleration profiles
 3. Updates position tracking
 4. Monitors HLFB for status feedback
 5. Writes status/feedback to Input Assembly 100
 
-**RMT Hardware**: Step pulses are generated using the ESP32-P4 RMT peripheral, which provides precise timing (typically 10 microsecond pulse width) independent of task scheduling and CPU load.
+**Step Rate**: Limited by task frequency (default 5 kHz) and RMT configuration. RMT hardware enables much higher rates than software GPIO toggling.
 
 ### Velocity Profiles
 
-Step generation uses trapezoidal velocity profiles:
-- **Acceleration Phase**: Velocity ramps from 0 to target velocity
+Step generation uses trapezoidal velocity profiles with integer-only calculations:
+- **Acceleration Phase**: Velocity ramps from 0 to target velocity using integer math
 - **Constant Velocity Phase**: Maintains target velocity
-- **Deceleration Phase**: Velocity ramps from target to 0
+- **Deceleration Phase**: Velocity ramps from target to 0, calculating deceleration distance as `v²/(2a)`
 
-Acceleration and deceleration rates are controlled by `accel_max` configuration.
+Acceleration and deceleration rates are controlled by `accel_max` configuration. All calculations use 64-bit integer intermediates to prevent overflow, then convert to 32-bit results. This provides precise motion control without floating-point operations, suitable for embedded systems.
+
+## Homing
+
+The component supports homing operations to establish a reference position (zero point) using a homing sensor.
+
+### Homing Sensor Configuration
+
+- **GPIO Pin**: Configure `gpio_homing_sensor` in servo configuration (-1 if not used)
+- **Sensor Type**: 
+  - `CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_OPEN` (NO): Sensor triggers when GPIO goes HIGH (closed)
+  - `CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_CLOSED` (NC): Sensor triggers when GPIO goes LOW (opened)
+- **Homing Velocity**: Configure `homing_velocity` (0 = use `vel_max`)
+
+### Homing Process
+
+1. Call `clearpath_servo_home()` or `clearpath_servo_manager_home()` with direction and timeout
+2. Servo moves at homing velocity in specified direction
+3. When sensor triggers, motion stops immediately
+4. Position is automatically set to 0
+5. Homing state transitions to IDLE
+
+### Homing via EtherNet/IP
+
+Command type 6 in Output Assembly 150:
+- Byte 0: Command type = 6
+- Bytes 1-4: int32_t value
+  - Lower 16 bits: direction (int16_t, positive=forward, negative=reverse)
+  - Upper 16 bits: timeout_ms (uint16_t, 0=no timeout)
+
+Example: Home forward with 5 second timeout
+- Value = (5000 << 16) | 1 = 0x00050001
+
+### Sensor Wiring
+
+Homing sensors typically require level shifting (5V→3.3V) similar to HLFB:
+- NO sensor: Usually open circuit, closes (goes HIGH) when triggered
+- NC sensor: Usually closed circuit, opens (goes LOW) when triggered
+- Pull-up/pull-down resistors configured automatically based on sensor type
 
 ## Integration Notes
 
@@ -262,12 +322,13 @@ To enable this component:
 
 ## Limitations
 
-- Step generation uses RMT hardware peripheral for precise timing
-- Maximum step rate limited by task frequency and RMT configuration
-- Position tracking is 32-bit signed integer (±2,147,483,647 steps)
-- Assembly data layout supports 1-2 servos fully (may need expansion for 4 servos)
-- Trapezoidal velocity profiles only (no S-curve acceleration)
-- RMT channel allocation: Up to 8 RMT channels available (one per servo)
+- **Step Generation**: Uses RMT hardware peripheral for precise timing
+- **Step Rate**: Limited by task frequency (default 5 kHz) and RMT configuration
+- **Position Range**: 32-bit signed integer (±2,147,483,647 steps)
+- **Assembly Size**: Output Assembly 150 is currently 40 bytes, supporting 1 servo fully (bytes 32-36). For 4 servos, assembly needs expansion to at least 52 bytes (bytes 32-51)
+- **Velocity Profiles**: Trapezoidal only (no S-curve acceleration)
+- **RMT Channels**: Up to 8 RMT channels available (one per servo)
+- **Integer Math**: All calculations use integer arithmetic (no floating point) for embedded system efficiency
 
 ## Future Enhancements
 
@@ -276,9 +337,9 @@ To enable this component:
 - S-curve acceleration profiles
 - Support for all 4 servos in assembly data
 - Limit switch support
-- Homing routines
 - Multi-axis coordinated motion
 - Position capture on HLFB events
+- Homing with index pulse (Z channel) support for encoders
 
 ## Attribution
 

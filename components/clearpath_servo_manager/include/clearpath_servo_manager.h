@@ -69,10 +69,13 @@ typedef struct {
     int gpio_dir;           /**< GPIO pin for direction signal */
     int gpio_enable;        /**< GPIO pin for enable signal (-1 if not used) */
     int gpio_hlfb;          /**< GPIO pin for HLFB feedback (-1 if not used) */
+    int gpio_homing_sensor; /**< GPIO pin for homing sensor (-1 if not used) */
     uint32_t vel_max;       /**< Maximum velocity in steps per second */
     uint32_t accel_max;     /**< Maximum acceleration in steps per second squared */
     clearpath_servo_hlfb_mode_t hlfb_mode; /**< HLFB interpretation mode */
     bool hlfb_active_high;   /**< HLFB active high (true) or active low (false) */
+    clearpath_servo_homing_sensor_type_t homing_sensor_type; /**< Homing sensor type (NO/NC) */
+    uint32_t homing_velocity; /**< Homing velocity in steps per second (0 = use vel_max) */
     bool enabled;           /**< Servo enabled flag */
 } clearpath_servo_manager_config_t;
 
@@ -144,6 +147,35 @@ uint8_t clearpath_servo_manager_get_status(uint8_t servo_index);
  * @return uint8_t Number of servos (0 to CLEARPATH_SERVO_MANAGER_MAX_SERVOS)
  */
 uint8_t clearpath_servo_manager_get_count(void);
+
+/**
+ * @brief Start homing move for a servo
+ * 
+ * Moves the servo at homing velocity until the homing sensor is triggered.
+ * When sensor triggers, motion stops and position is set to 0.
+ * 
+ * @param servo_index Servo index (0 to CLEARPATH_SERVO_MANAGER_MAX_SERVOS-1)
+ * @param direction Direction to move (positive = forward, negative = reverse)
+ * @param timeout_ms Maximum time to wait for sensor trigger (0 = no timeout)
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if homing sensor not configured
+ */
+esp_err_t clearpath_servo_manager_home(uint8_t servo_index, int32_t direction, uint32_t timeout_ms);
+
+/**
+ * @brief Check if homing is complete for a servo
+ * 
+ * @param servo_index Servo index (0 to CLEARPATH_SERVO_MANAGER_MAX_SERVOS-1)
+ * @return true if homing is complete (sensor triggered and position set to 0)
+ */
+bool clearpath_servo_manager_is_homing_complete(uint8_t servo_index);
+
+/**
+ * @brief Get homing sensor status for a servo
+ * 
+ * @param servo_index Servo index (0 to CLEARPATH_SERVO_MANAGER_MAX_SERVOS-1)
+ * @return true if sensor is triggered (based on sensor type: NO=HIGH, NC=LOW)
+ */
+bool clearpath_servo_manager_get_homing_sensor_status(uint8_t servo_index);
 
 #ifdef __cplusplus
 }

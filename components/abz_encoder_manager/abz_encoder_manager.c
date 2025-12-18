@@ -1,18 +1,19 @@
 /**
  * @file abz_encoder_manager.c
- * @brief ABZ Encoder Manager Implementation
+ * @brief ABZ Encoder Manager Implementation using PCNT Hardware
  * 
  * **NOTE: This component is scaffolded but NOT included in the build.**
  * 
  * Architecture:
  * ------------
  * 
- * GPIO Interrupt Flow:
- *   A/B/Z GPIO → ISR Handler → Queue → Task → Quadrature Decoder → Assembly Data
+ * PCNT Hardware + GPIO Interrupt Flow:
+ *   A/B GPIO → PCNT Hardware (quadrature decoding) → Task (periodic read) → Assembly Data
+ *   Z GPIO → ISR Handler → Queue → Task → Index Processing → Assembly Data
  * 
- * 1. GPIO interrupts configured on A/B channels (both edges) and Z channel (rising edge)
- * 2. ISR handler reads GPIO states and sends to queue (non-blocking)
- * 3. Task processes queue events and updates encoder position
+ * 1. PCNT hardware configured for A/B quadrature decoding (no interrupts needed)
+ * 2. GPIO interrupt configured on Z channel (rising edge) for index pulse
+ * 3. Task periodically reads PCNT counter and updates encoder position
  * 4. Velocity calculated periodically from position delta
  * 5. Assembly data updated with mutex protection
  * 
@@ -38,10 +39,9 @@
 
 static const char *TAG = "abz_encoder_manager";
 
-// Encoder event structure for queue
+// Encoder event structure for queue (Z channel index pulse only)
 typedef struct {
-    uint32_t gpio_num;      /**< GPIO number that triggered interrupt */
-    uint32_t level;         /**< GPIO level (for A/B channels) */
+    uint32_t gpio_num;      /**< GPIO number that triggered interrupt (Z channel) */
     uint64_t timestamp_us;  /**< Timestamp in microseconds */
 } encoder_event_t;
 
@@ -68,30 +68,29 @@ static int16_t s_current_velocity = 0;
 #define EVENT_QUEUE_SIZE         32
 
 /**
- * @brief GPIO interrupt service routine
+ * @brief GPIO interrupt service routine for Z channel (index pulse)
  * 
  * This ISR runs in IRAM context and must be fast.
- * It only reads GPIO states and sends to queue.
+ * Only handles Z channel index pulse - A/B channels are handled by PCNT hardware.
  */
 static void IRAM_ATTR encoder_isr_handler(void* arg)
 {
     uint32_t gpio_num = (uint32_t)arg;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     
+    // Only process Z channel (index pulse)
+    // A/B channels are handled by PCNT hardware, no interrupts needed
+    // Note: gpio_num comes from ISR registration arg, which is set to gpio_z
+    // No need to check against s_config.gpio_z (which could change)
+    
     // Note: esp_timer_get_time() may not be IRAM-safe on all ESP32 variants
-    // For production, consider using a simpler timestamp or IRAM-safe timer
     uint64_t timestamp_us = 0;
     #ifdef CONFIG_ESP_TIMER_PROFILING
-    // esp_timer_get_time() is IRAM-safe when profiling is enabled
     timestamp_us = esp_timer_get_time();
-    #else
-    // Fallback: use 0 timestamp, task will use its own timing
-    timestamp_us = 0;
     #endif
     
     encoder_event_t event = {
         .gpio_num = gpio_num,
-        .level = gpio_get_level(gpio_num),
         .timestamp_us = timestamp_us
     };
     
@@ -108,96 +107,105 @@ static void IRAM_ATTR encoder_isr_handler(void* arg)
 /**
  * @brief Encoder processing task
  * 
- * This task processes encoder events from the queue and updates position.
+ * This task periodically reads PCNT hardware counter and processes Z channel index pulses.
+ * PCNT hardware handles A/B quadrature decoding automatically.
  */
 static void encoder_task(void *pvParameters)
 {
     (void)pvParameters;
     encoder_event_t event;
+    const TickType_t task_interval = pdMS_TO_TICKS(1);  // Check every 1ms
     
     ESP_LOGI(TAG, "Encoder task started");
     
     while (1) {
-        // Wait for event from queue
-        if (xQueueReceive(s_event_queue, &event, portMAX_DELAY)) {
-            if (!s_initialized) {
-                continue;
-            }
-            
-            // Read current GPIO states and config with mutex protection
-            abz_encoder_config_t config_copy;
-            if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                memcpy(&config_copy, &s_config, sizeof(abz_encoder_config_t));
-                xSemaphoreGive(s_config_mutex);
-            } else {
-                // Fallback to direct access if mutex unavailable (shouldn't happen)
-                memcpy(&config_copy, &s_config, sizeof(abz_encoder_config_t));
-            }
-            
-            bool a_state = gpio_get_level(config_copy.gpio_a);
-            bool b_state = gpio_get_level(config_copy.gpio_b);
-            bool z_state = gpio_get_level(config_copy.gpio_z);
-            
-            // Process based on which GPIO triggered
-            if (event.gpio_num == config_copy.gpio_a || event.gpio_num == config_copy.gpio_b) {
-                // Quadrature signal change
-                abz_encoder_process_quadrature(&s_encoder, a_state, b_state);
-            } else if (event.gpio_num == config_copy.gpio_z && z_state == 1) {
-                // Index pulse (rising edge)
-                abz_encoder_process_index(&s_encoder, config_copy.index_reset_position);
-            }
-            
-            // Update assembly data periodically
-            static uint64_t last_assembly_update_us = 0;
-            uint64_t now_us = esp_timer_get_time();
-            if (now_us - last_assembly_update_us > 10000) {  // Update every 10ms
-                SemaphoreHandle_t assembly_mutex = fusion_core_get_assembly_mutex();
-                if (assembly_mutex != NULL && xSemaphoreTake(assembly_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    int32_t position = abz_encoder_get_position(&s_encoder);
-                    bool index_detected = abz_encoder_get_index_detected(&s_encoder);
-                    abz_encoder_direction_t direction = abz_encoder_get_direction(&s_encoder);
-                    
-                    // Write position (bytes 61-64)
-                    memcpy(&INPUT_ASSEMBLY_100[61], &position, sizeof(int32_t));
-                    
-                    // Calculate velocity (read config with mutex)
-                    uint32_t velocity_interval_ms = DEFAULT_VELOCITY_INTERVAL_MS;
-                    if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
-                        velocity_interval_ms = s_config.velocity_interval_ms;
-                        xSemaphoreGive(s_config_mutex);
-                    }
-                    
-                    uint64_t time_delta_us = now_us - s_last_velocity_update_us;
-                    if (time_delta_us >= (velocity_interval_ms * 1000)) {
-                        int32_t position_delta = position - s_last_position;
-                        s_current_velocity = abz_encoder_calculate_velocity(
-                            position_delta, 
-                            time_delta_us / 1000
-                        );
-                        s_last_position = position;
-                        s_last_velocity_update_us = now_us;
-                    }
-                    
-                    // Write velocity (bytes 65-66)
-                    memcpy(&INPUT_ASSEMBLY_100[65], &s_current_velocity, sizeof(int16_t));
-                    
-                    // Write status flags (byte 67)
-                    uint8_t status = 0;
-                    if (index_detected) status |= 0x01;
-                    if (direction == ABZ_ENCODER_DIRECTION_FORWARD) status |= 0x02;
-                    if (s_initialized) status |= 0x04;
-                    INPUT_ASSEMBLY_100[67] = status;
-                    
-                    xSemaphoreGive(assembly_mutex);
-                    last_assembly_update_us = now_us;
+        if (!s_initialized) {
+            vTaskDelay(task_interval);
+            continue;
+        }
+        
+        // Read config with mutex protection
+        abz_encoder_config_t config_copy;
+        if (s_config_mutex == NULL) {
+            vTaskDelay(task_interval);
+            continue;  // Cannot proceed without mutex
+        }
+        if (xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+            vTaskDelay(task_interval);
+            continue;  // Skip this iteration if mutex unavailable
+        }
+        memcpy(&config_copy, &s_config, sizeof(abz_encoder_config_t));
+        xSemaphoreGive(s_config_mutex);
+        
+        // Update position from PCNT hardware counter
+        abz_encoder_update_position(&s_encoder);
+        
+        // Check for Z channel index pulse events (non-blocking)
+        if (xQueueReceive(s_event_queue, &event, 0) == pdTRUE) {
+            if (event.gpio_num == config_copy.gpio_z) {
+                // Index pulse detected
+                bool z_state = gpio_get_level(config_copy.gpio_z);
+                if (z_state == 1) {  // Rising edge
+                    abz_encoder_process_index(&s_encoder, config_copy.index_reset_position);
                 }
             }
         }
+        
+        // Update assembly data periodically (every 10ms)
+        static uint64_t last_assembly_update_us = 0;
+        uint64_t now_us = esp_timer_get_time();
+        if (now_us - last_assembly_update_us > 10000) {
+            SemaphoreHandle_t assembly_mutex = fusion_core_get_assembly_mutex();
+            if (assembly_mutex != NULL && xSemaphoreTake(assembly_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                int32_t position = abz_encoder_get_position(&s_encoder);
+                bool index_detected = abz_encoder_get_index_detected(&s_encoder);
+                abz_encoder_direction_t direction = abz_encoder_get_direction(&s_encoder);
+                
+                // Write position (bytes 61-64)
+                memcpy(&INPUT_ASSEMBLY_100[61], &position, sizeof(int32_t));
+                
+                // Calculate velocity
+                uint32_t velocity_interval_ms = DEFAULT_VELOCITY_INTERVAL_MS;
+                if (s_config_mutex != NULL && xSemaphoreTake(s_config_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
+                    velocity_interval_ms = s_config.velocity_interval_ms;
+                    xSemaphoreGive(s_config_mutex);
+                }
+                
+                uint64_t time_delta_us = now_us - s_last_velocity_update_us;
+                if (time_delta_us >= (velocity_interval_ms * 1000)) {
+                    int32_t position_delta = position - s_last_position;
+                    s_current_velocity = abz_encoder_calculate_velocity(
+                        position_delta, 
+                        time_delta_us / 1000
+                    );
+                    s_last_position = position;
+                    s_last_velocity_update_us = now_us;
+                }
+                
+                // Write velocity (bytes 65-66)
+                memcpy(&INPUT_ASSEMBLY_100[65], &s_current_velocity, sizeof(int16_t));
+                
+                // Write status flags (byte 67)
+                uint8_t status = 0;
+                if (index_detected) status |= 0x01;
+                if (direction == ABZ_ENCODER_DIRECTION_FORWARD) status |= 0x02;
+                if (s_initialized) status |= 0x04;
+                INPUT_ASSEMBLY_100[67] = status;
+                
+                xSemaphoreGive(assembly_mutex);
+                last_assembly_update_us = now_us;
+            }
+        }
+        
+        vTaskDelay(task_interval);
     }
 }
 
 /**
  * @brief Configure GPIO for encoder
+ * 
+ * Note: A/B channels are configured by PCNT hardware during encoder init.
+ * Only Z channel (index pulse) needs GPIO interrupt configuration here.
  */
 static esp_err_t configure_gpio(void)
 {
@@ -210,31 +218,18 @@ static esp_err_t configure_gpio(void)
         return ESP_ERR_INVALID_ARG;
     }
 
-    // Configure A channel (both edges)
-    gpio_config_t io_conf_a = {
-        .intr_type = GPIO_INTR_ANYEDGE,
+    // Configure A/B channels as inputs (PCNT hardware will handle them)
+    // These don't need interrupts - PCNT hardware decodes quadrature automatically
+    gpio_config_t io_conf_ab = {
+        .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << s_config.gpio_a),
+        .pin_bit_mask = (1ULL << s_config.gpio_a) | (1ULL << s_config.gpio_b),
         .pull_down_en = 0,
         .pull_up_en = 1
     };
-    esp_err_t ret = gpio_config(&io_conf_a);
+    esp_err_t ret = gpio_config(&io_conf_ab);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure GPIO A: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    
-    // Configure B channel (both edges)
-    gpio_config_t io_conf_b = {
-        .intr_type = GPIO_INTR_ANYEDGE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << s_config.gpio_b),
-        .pull_down_en = 0,
-        .pull_up_en = 1
-    };
-    ret = gpio_config(&io_conf_b);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure GPIO B: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure GPIO A/B: %s", esp_err_to_name(ret));
         return ret;
     }
     
@@ -253,20 +248,16 @@ static esp_err_t configure_gpio(void)
     }
     
     // Install GPIO ISR service if not already installed
-    // Note: gpio_install_isr_service() is safe to call multiple times
-    // It will return ESP_ERR_INVALID_STATE if already installed, which we can ignore
     esp_err_t isr_ret = gpio_install_isr_service(0);
     if (isr_ret != ESP_OK && isr_ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(isr_ret));
         return isr_ret;
     }
     
-    // Add ISR handlers
-    gpio_isr_handler_add(s_config.gpio_a, encoder_isr_handler, (void*)s_config.gpio_a);
-    gpio_isr_handler_add(s_config.gpio_b, encoder_isr_handler, (void*)s_config.gpio_b);
+    // Add ISR handler for Z channel only (A/B handled by PCNT hardware)
     gpio_isr_handler_add(s_config.gpio_z, encoder_isr_handler, (void*)s_config.gpio_z);
     
-    ESP_LOGI(TAG, "GPIO configured: A=%d, B=%d, Z=%d", 
+    ESP_LOGI(TAG, "GPIO configured: A=%d (PCNT), B=%d (PCNT), Z=%d (interrupt)", 
              s_config.gpio_a, s_config.gpio_b, s_config.gpio_z);
     
     return ESP_OK;
@@ -301,17 +292,21 @@ esp_err_t abz_encoder_manager_init(void)
         return ESP_ERR_NO_MEM;
     }
     
-    // Initialize encoder driver
-    esp_err_t ret = abz_encoder_init(&s_encoder, s_config.resolution);
+    // Configure GPIO first (needed for PCNT configuration)
+    esp_err_t ret = configure_gpio();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize encoder driver");
+        ESP_LOGE(TAG, "Failed to configure GPIO");
+        vSemaphoreDelete(s_config_mutex);
         return ret;
     }
     
-    // Configure GPIO
-    ret = configure_gpio();
+    // Initialize encoder driver with PCNT hardware (passes GPIO pins)
+    ret = abz_encoder_init(&s_encoder, s_config.resolution, s_config.gpio_a, s_config.gpio_b);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure GPIO");
+        ESP_LOGE(TAG, "Failed to initialize encoder driver with PCNT");
+        // Clean up GPIO ISR handler
+        gpio_isr_handler_remove(s_config.gpio_z);
+        vSemaphoreDelete(s_config_mutex);
         return ret;
     }
     
@@ -319,6 +314,9 @@ esp_err_t abz_encoder_manager_init(void)
     s_event_queue = xQueueCreate(EVENT_QUEUE_SIZE, sizeof(encoder_event_t));
     if (s_event_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create event queue");
+        abz_encoder_deinit(&s_encoder);
+        gpio_isr_handler_remove(s_config.gpio_z);
+        vSemaphoreDelete(s_config_mutex);
         return ESP_ERR_NO_MEM;
     }
     
@@ -327,6 +325,9 @@ esp_err_t abz_encoder_manager_init(void)
     if (s_task_handle == NULL) {
         ESP_LOGE(TAG, "Failed to create encoder task");
         vQueueDelete(s_event_queue);
+        abz_encoder_deinit(&s_encoder);
+        gpio_isr_handler_remove(s_config.gpio_z);
+        vSemaphoreDelete(s_config_mutex);
         return ESP_ERR_NO_MEM;
     }
     

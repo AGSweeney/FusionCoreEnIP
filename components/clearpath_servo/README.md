@@ -31,6 +31,7 @@ Each servo requires:
 - **Direction GPIO**: Output, sets direction (HIGH=forward, LOW=reverse, requires level shifting to 5V)
 - **Enable GPIO**: Output, optional, enables/disables servo (requires level shifting to 5V)
 - **HLFB GPIO**: Input, High Level Feedback status (5V from servo, may need level shifting to 3.3V)
+- **Homing Sensor GPIO**: Input, optional, homing sensor signal (may need level shifting to 3.3V)
 
 ## API Reference
 
@@ -44,10 +45,13 @@ clearpath_servo_config_t config = {
     .gpio_dir = 9,
     .gpio_enable = 10,  // Optional, use -1 if not used
     .gpio_hlfb = 11,    // Optional, use -1 if not used
+    .gpio_homing_sensor = 12,  // Optional, use -1 if not used
     .vel_max = 1000,    // Maximum velocity in steps/second
     .accel_max = 10000, // Maximum acceleration in steps/second²
     .hlfb_mode = CLEARPATH_SERVO_HLFB_MODE_MOVE_COMPLETE,
-    .hlfb_active_high = true
+    .hlfb_active_high = true,
+    .homing_sensor_type = CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_OPEN,
+    .homing_velocity = 0  // 0 = use vel_max
 };
 
 clearpath_servo_handle_t *servo;
@@ -134,18 +138,56 @@ clearpath_servo_set_enable(servo, true);
 clearpath_servo_set_enable(servo, false);
 ```
 
+### Homing
+
+```c
+// Start homing move (move forward until sensor triggers)
+clearpath_servo_home(servo, 1, 5000);  // direction=forward, timeout=5 seconds
+
+// Start homing move (move reverse until sensor triggers)
+clearpath_servo_home(servo, -1, 10000);  // direction=reverse, timeout=10 seconds
+
+// Check if homing is complete
+if (clearpath_servo_is_homing_complete(servo)) {
+    // Position is now set to 0
+}
+
+// Check homing sensor status
+bool sensor_triggered = clearpath_servo_get_homing_sensor_status(servo);
+```
+
+**Homing Behavior:**
+- Moves at configured homing velocity (or `vel_max` if `homing_velocity` is 0)
+- Stops immediately when sensor triggers
+- Sets position to 0 when sensor triggers
+- Supports timeout (0 = no timeout)
+- Sensor type configurable: NO (Normally Open) or NC (Normally Closed)
+
 ## Step Generation
 
 **Note**: This driver component provides the control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task using the ESP32-P4 RMT (Remote Control) hardware peripheral.
 
-The manager component handles:
+### Manager Integration Functions
+
+The driver provides getter/setter functions for the manager to access and update internal state:
+
+- `clearpath_servo_get_target_position()` - Get target position
+- `clearpath_servo_get_target_velocity()` - Get target velocity
+- `clearpath_servo_get_vel_max()` - Get maximum velocity
+- `clearpath_servo_get_accel_max()` - Get maximum acceleration
+- `clearpath_servo_get_state()` - Get servo state (IDLE/MOVING/VELOCITY_MODE)
+- `clearpath_servo_set_current_velocity()` - Update current velocity (for trapezoidal profile tracking)
+
+### Manager Responsibilities
+
+The `clearpath_servo_manager` component handles:
 - Step pulse generation via RMT hardware peripheral (precise timing, typically 10 microsecond pulse width)
 - Background task coordinates step timing (default 5 kHz, configurable)
-- Trapezoidal velocity profiles (acceleration → constant velocity → deceleration)
+- Trapezoidal velocity profiles with integer-only calculations
 - Position tracking and step counting
 - Integration with EtherNet/IP assembly data
 
-**RMT Hardware Step Generation**: This implementation uses the ESP32-P4 RMT peripheral for step pulse generation, providing precise timing independent of task scheduling. RMT hardware enables accurate pulse widths and higher step rates compared to software GPIO toggling. The RMT clock divider is configured for 1 MHz resolution (1 microsecond per tick), allowing precise control of step pulse timing.
+See `components/clearpath_servo_manager/README.md` for detailed step generation implementation.
 
 ## HLFB Modes
 
@@ -161,14 +203,14 @@ The HLFB mode should match the configuration set in Teknic Motion Studio (MSP) s
 
 ## Integration Notes
 
-This component is designed to work with `clearpath_servo_manager` which handles:
+This driver component is designed to work with `clearpath_servo_manager`, which provides:
 - Background step generation task
 - Assembly data integration (EtherNet/IP)
 - Multi-servo management
 - Configuration management (NVS)
-- Status updates
+- Status updates and feedback
 
-See `components/clearpath_servo_manager/README.md` for integration details.
+For hardware connection details, assembly data layout, and integration instructions, see `components/clearpath_servo_manager/README.md`.
 
 ## Limitations
 
@@ -179,6 +221,7 @@ See `components/clearpath_servo_manager/README.md` for integration details.
 - **Maximum step rate**: Limited by task frequency and RMT configuration. RMT hardware enables higher rates than software GPIO toggling
 - Acceleration/deceleration profiles are simplified (trapezoidal)
 - RMT hardware provides accurate pulse timing independent of CPU load
+- **Integer Math**: All internal calculations use integer arithmetic (no floating point) for embedded system efficiency
 
 ## Future Enhancements
 
