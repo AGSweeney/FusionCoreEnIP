@@ -848,6 +848,21 @@ void HandleIoConnectionTimeOut(CipConnectionObject *connection_object) {
   }
 
   ConnectionObjectSetState(connection_object, kConnectionObjectStateTimedOut);
+  
+  /* For point-to-point connections, clean up immediately after timeout.
+   * For multicast connections, cleanup happens after handover logic above.
+   * This ensures timed-out connections are removed from the active list
+   * and resources are freed, preventing ownership conflicts on reconnect. */
+  if(kConnectionObjectConnectionTypePointToPoint == conn_type ||
+     handover == 0) {
+    /* Point-to-point or no handover needed - clean up immediately */
+    OPENER_TRACE_INFO("Cleaning up timed-out connection (ConnNr: %u)\n",
+                      connection_object->connection_serial_number);
+    CloseCommunicationChannelsAndRemoveFromActiveConnectionsList(connection_object);
+  } else {
+    /* Multicast with handover - set timer for delayed cleanup (10 seconds grace period) */
+    connection_object->inactivity_watchdog_timer = 10000; /* 10 seconds in milliseconds */
+  }
 }
 
 EipStatus SendConnectedData(CipConnectionObject *connection_object) {

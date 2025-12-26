@@ -850,32 +850,74 @@ EipStatus ForwardClose(CipInstance *instance,
   EipUint32 originator_serial_number = GetUdintFromMessage(
     &message_router_request->data);
 
-  OPENER_TRACE_INFO("ForwardClose: ConnSerNo %d\n", connection_serial_number);
+  OPENER_TRACE_INFO("ForwardClose: ConnSerNo %d, VendorID %u, OriginatorSerial %" PRIu32 "\n",
+                    connection_serial_number,
+                    originator_vendor_id,
+                    originator_serial_number);
 
   DoublyLinkedListNode *node = connection_list.first;
+  size_t connection_count = 0;
+  size_t established_count = 0;
+  size_t timed_out_count = 0;
+
+  /* First pass: count connections for debugging */
+  while(NULL != node) {
+    connection_count++;
+    CipConnectionObject *conn = node->data;
+    ConnectionObjectState state = ConnectionObjectGetState(conn);
+    if(state == kConnectionObjectStateEstablished) {
+      established_count++;
+    } else if(state == kConnectionObjectStateTimedOut) {
+      timed_out_count++;
+    }
+    node = node->next;
+  }
+  
+  OPENER_TRACE_INFO("ForwardClose: Searching %zu connections (%zu established, %zu timed-out)\n",
+                    connection_count, established_count, timed_out_count);
+
+  node = connection_list.first;
 
   while(NULL != node) {
     /* this check should not be necessary as only established connections should be in the active connection list */
     CipConnectionObject *connection_object = node->data;
-    if( (kConnectionObjectStateEstablished ==
-         ConnectionObjectGetState(connection_object) )
-        || (kConnectionObjectStateTimedOut ==
-            ConnectionObjectGetState(connection_object) ) ) {
+    ConnectionObjectState state = ConnectionObjectGetState(connection_object);
+    
+    if( (kConnectionObjectStateEstablished == state)
+        || (kConnectionObjectStateTimedOut == state) ) {
+      OPENER_TRACE_INFO(
+        "ForwardClose: Checking connection: ConnSerNo %u, VendorID %u, OriginatorSerial %" PRIu32 ", State=%d\n",
+        connection_object->connection_serial_number,
+        connection_object->originator_vendor_id,
+        connection_object->originator_serial_number,
+        state);
+      
       if( (connection_object->connection_serial_number ==
            connection_serial_number) &&
           (connection_object->originator_vendor_id == originator_vendor_id)
           && (connection_object->originator_serial_number ==
               originator_serial_number) ) {
         /* found the corresponding connection object -> close it */
+        OPENER_TRACE_INFO("ForwardClose: MATCH FOUND! Closing connection (ConnNr: %u)\n",
+                          connection_object->connection_serial_number);
         OPENER_ASSERT(NULL != connection_object->connection_close_function);
         if( ( (struct sockaddr_in *) originator_address )->sin_addr.s_addr ==
             connection_object->originator_address.sin_addr.s_addr ) {
+          OPENER_TRACE_INFO("ForwardClose: Closing connection (ConnNr: %u) - IP match\n",
+                            connection_object->connection_serial_number);
           connection_object->connection_close_function(connection_object);
           connection_status = kConnectionManagerExtendedStatusCodeSuccess;
           g_connection_manager_stats.close_requests++;  /* Successful close */
         } else {
-          connection_status = kConnectionManagerExtendedStatusWrongCloser;
-          g_connection_manager_stats.close_format_requests++;  /* Format error */
+          /* IP address mismatch - but identifiers match, so close anyway.
+           * This handles cases where scanner's IP changed (DHCP renewal, etc.)
+           * Log warning but still close the connection to prevent resource leaks. */
+          OPENER_TRACE_WARN(
+            "ForwardClose: IP address mismatch but identifiers match - closing connection anyway (ConnNr: %u)\n",
+            connection_object->connection_serial_number);
+          connection_object->connection_close_function(connection_object);
+          connection_status = kConnectionManagerExtendedStatusCodeSuccess;
+          g_connection_manager_stats.close_requests++;  /* Count as successful close */
         }
         break;
       }
@@ -885,19 +927,29 @@ EipStatus ForwardClose(CipInstance *instance,
   if(kConnectionManagerExtendedStatusCodeErrorConnectionTargetConnectionNotFound
      == connection_status) {
     OPENER_TRACE_INFO(
-      "Connection not found! Requested connection tried: %u, %u, %" PRIu32 "\n",
+      "ForwardClose: Connection not found! Requested: ConnSerNo %u, VendorID %u, OriginatorSerial %" PRIu32 "\n",
       connection_serial_number,
       originator_vendor_id,
       originator_serial_number);
     g_connection_manager_stats.close_other_requests++;  /* Connection not found */
   }
 
-  return AssembleForwardCloseResponse(connection_serial_number,
-                                      originator_vendor_id,
-                                      originator_serial_number,
-                                      message_router_request,
-                                      message_router_response,
-                                      connection_status);
+  EipStatus response_status = AssembleForwardCloseResponse(connection_serial_number,
+                                                            originator_vendor_id,
+                                                            originator_serial_number,
+                                                            message_router_request,
+                                                            message_router_response,
+                                                            connection_status);
+  
+  if(response_status == kEipStatusOkSend) {
+    OPENER_TRACE_INFO("ForwardClose: Response assembled successfully (status: %u)\n",
+                      connection_status);
+  } else {
+    OPENER_TRACE_ERR("ForwardClose: Failed to assemble response (status: %d)\n",
+                     response_status);
+  }
+  
+  return response_status;
 }
 
 /* TODO: Not implemented */
@@ -1107,6 +1159,29 @@ EipStatus ManageConnections(MilliSeconds elapsed_time) {
     CipConnectionObject *connection_object = node->data;
     
     DoublyLinkedListNode *next_node = node->next;
+    
+    /* Clean up stale timed-out connections (grace period expired) */
+    if(kConnectionObjectStateTimedOut ==
+       ConnectionObjectGetState(connection_object)) {
+      /* For multicast connections that timed out, we set inactivity_watchdog_timer
+       * to a grace period (10 seconds). Count it down and clean up when expired. */
+      if(connection_object->inactivity_watchdog_timer > 0) {
+        if(elapsed_time >= connection_object->inactivity_watchdog_timer) {
+          /* Grace period expired - clean up the timed-out connection */
+          OPENER_TRACE_INFO(
+            "Cleaning up stale timed-out connection after grace period (ConnNr: %u)\n",
+            connection_object->connection_serial_number);
+          if(NULL != connection_object->connection_close_function) {
+            connection_object->connection_close_function(connection_object);
+          }
+        } else {
+          connection_object->inactivity_watchdog_timer -= elapsed_time;
+        }
+      }
+      /* Skip to next connection - don't process timed-out connections further */
+      node = next_node;
+      continue;
+    }
     
     if(kConnectionObjectStateEstablished ==
        ConnectionObjectGetState(connection_object) ) {

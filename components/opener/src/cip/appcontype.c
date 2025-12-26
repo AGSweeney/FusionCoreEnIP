@@ -202,18 +202,30 @@ CipConnectionObject *GetExclusiveOwnerConnection(
           break;
         }
         if(kConnectionObjectStateTimedOut ==
-           ConnectionObjectGetState(exclusive_owner)
-           && ConnectionObjectEqualOriginator(connection_object,
-                                              exclusive_owner) ) {
-          g_exlusive_owner_connections[i].connection_data.
-          connection_close_function(&(g_exlusive_owner_connections[i].
-                                      connection_data) );
-          return &(g_exlusive_owner_connections[i].connection_data);
+           ConnectionObjectGetState(exclusive_owner)) {
+          /* Timed-out connection found - clean it up regardless of originator match.
+           * This prevents stale timed-out connections from blocking new connections.
+           * If originator matches, we can reuse the connection object. */
+          if(ConnectionObjectEqualOriginator(connection_object,
+                                            exclusive_owner)) {
+            /* Same originator - reuse the connection object */
+            g_exlusive_owner_connections[i].connection_data.
+            connection_close_function(&(g_exlusive_owner_connections[i].
+                                        connection_data) );
+            return &(g_exlusive_owner_connections[i].connection_data);
+          } else {
+            /* Different originator - close the stale connection and allow new one */
+            OPENER_TRACE_INFO(
+              "Cleaning up stale timed-out connection (different originator) to allow new connection\n");
+            g_exlusive_owner_connections[i].connection_data.
+            connection_close_function(&(g_exlusive_owner_connections[i].
+                                        connection_data) );
+            /* Continue to allow new connection to be created */
+          }
         } else {
           *extended_error =
             kConnectionManagerExtendedStatusCodeErrorOwnershipConflict;
-          OPENER_TRACE_INFO(
-            "Hit an Ownership conflict with timed out connection");
+          OPENER_TRACE_INFO("Hit an Ownership conflict in appcontype.c:198\n");
           break;
         }
       }
