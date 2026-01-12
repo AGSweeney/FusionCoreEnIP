@@ -4,3 +4,6 @@ Build/
 .cache/
 
 .vscode/settings.json
+
+# Documentation - customer-specific analysis
+docs/VL53L1X_48_DEVICE_INTEGRATION.md
