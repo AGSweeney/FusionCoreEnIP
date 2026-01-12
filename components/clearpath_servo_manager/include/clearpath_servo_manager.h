@@ -62,6 +62,14 @@ extern "C" {
 #define CLEARPATH_SERVO_MANAGER_MAX_SERVOS 4
 
 /**
+ * @brief Unit type for motion control
+ */
+typedef enum {
+    CLEARPATH_SERVO_UNIT_MM = 0,      /**< Millimeters */
+    CLEARPATH_SERVO_UNIT_INCH = 1     /**< Inches */
+} clearpath_servo_unit_t;
+
+/**
  * @brief Servo configuration structure
  */
 typedef struct {
@@ -72,10 +80,13 @@ typedef struct {
     int gpio_homing_sensor; /**< GPIO pin for homing sensor (-1 if not used) */
     uint32_t vel_max;       /**< Maximum velocity in steps per second */
     uint32_t accel_max;     /**< Maximum acceleration in steps per second squared */
+    uint32_t jerk_max;      /**< Maximum jerk in steps per second cubed (for S-curve profile, 0 = use default) */
+    clearpath_servo_profile_type_t profile_type; /**< Motion profile type (trapezoidal or S-curve) */
     clearpath_servo_hlfb_mode_t hlfb_mode; /**< HLFB interpretation mode */
     bool hlfb_active_high;   /**< HLFB active high (true) or active low (false) */
     clearpath_servo_homing_sensor_type_t homing_sensor_type; /**< Homing sensor type (NO/NC) */
     uint32_t homing_velocity; /**< Homing velocity in steps per second (0 = use vel_max) */
+    uint32_t steps_per_unit;  /**< Steps per unit (e.g., 800 steps/mm or 400 steps/inch) */
     bool enabled;           /**< Servo enabled flag */
 } clearpath_servo_manager_config_t;
 
@@ -176,6 +187,213 @@ bool clearpath_servo_manager_is_homing_complete(uint8_t servo_index);
  * @return true if sensor is triggered (based on sensor type: NO=HIGH, NC=LOW)
  */
 bool clearpath_servo_manager_get_homing_sensor_status(uint8_t servo_index);
+
+/**
+ * @brief Set unit type for all axes
+ * 
+ * Sets the unit type (mm or inches) for all coordinated motion operations.
+ * All axes must use the same unit type - mixing units is not supported.
+ * 
+ * @param unit_type Unit type (CLEARPATH_SERVO_UNIT_MM or CLEARPATH_SERVO_UNIT_INCH)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_manager_set_unit_type(clearpath_servo_unit_t unit_type);
+
+/**
+ * @brief Get unit type
+ * 
+ * @return clearpath_servo_unit_t Current unit type
+ */
+clearpath_servo_unit_t clearpath_servo_manager_get_unit_type(void);
+
+/**
+ * @brief Start coordinated linear move
+ * 
+ * Moves multiple axes in a straight line to target positions.
+ * All axes start and stop together, maintaining proportional motion.
+ * 
+ * Positions and feedrate are in units (mm or inches) as configured.
+ * Feedrate is in units/minute along the path (not per axis). The path length
+ * is calculated as sqrt(sum of squares of axis distances). Each axis moves
+ * at the velocity needed to complete its distance in the same time, ensuring
+ * synchronized arrival at target positions.
+ * 
+ * @param axis_count Number of axes (2-4)
+ * @param axis_indices Array of servo indices
+ * @param target_positions Array of target positions in units (one per axis)
+ * @param feedrate Feedrate in units/minute along the path
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_manager_move_linear(
+    uint8_t axis_count,
+    const uint8_t *axis_indices,
+    const float *target_positions,
+    float feedrate
+);
+
+/**
+ * @brief Start circular interpolation (arc move)
+ * 
+ * Moves X and Y axes in a circular arc.
+ * 
+ * Positions, radius, and feedrate are in units (mm or inches) as configured.
+ * Feedrate is in units/minute along the arc path. The arc length is calculated
+ * as radius * angle_radians. Both axes move at velocities needed to maintain
+ * the specified feedrate along the arc, ensuring synchronized motion.
+ * 
+ * @param axis_x_index X axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_y_index Y axis servo index (0-3, where servo index = motor axis number)
+ * @param center_x Center X position in units
+ * @param center_y Center Y position in units
+ * @param radius Radius in units
+ * @param start_angle_deg Start angle in degrees (0-360)
+ * @param end_angle_deg End angle in degrees (0-360)
+ * @param clockwise True for clockwise, false for counter-clockwise
+ * @param feedrate Feedrate in units/minute along the arc path
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_manager_move_arc(
+    uint8_t axis_x_index,
+    uint8_t axis_y_index,
+    float center_x,
+    float center_y,
+    float radius,
+    int32_t start_angle_deg,
+    int32_t end_angle_deg,
+    bool clockwise,
+    float feedrate
+);
+
+/**
+ * @brief Start circular interpolation (arc move) using end point and radius
+ * 
+ * Moves X and Y axes in a circular arc from current position to end point.
+ * Similar to G-code G02/G03 with R parameter (radius mode).
+ * 
+ * The center is calculated from the current position, end point, and radius.
+ * There are two possible arcs (major and minor) - the direction parameter
+ * determines which arc to take.
+ * 
+ * Positions, radius, and feedrate are in units (mm or inches) as configured.
+ * Feedrate is in units/minute along the arc path.
+ * 
+ * @param axis_x_index X axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_y_index Y axis servo index (0-3, where servo index = motor axis number)
+ * @param end_x End X position in units (absolute if absolute=true, relative if absolute=false)
+ * @param end_y End Y position in units (absolute if absolute=true, relative if absolute=false)
+ * @param absolute If true, end_x/end_y are absolute positions; if false, they are relative to current position
+ * @param radius Radius in units (must be >= half the distance from start to end)
+ * @param clockwise True for clockwise (G02), false for counter-clockwise (G03)
+ * @param feedrate Feedrate in units/minute along the arc path
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if radius is too small
+ */
+esp_err_t clearpath_servo_manager_move_arc_to_point(
+    uint8_t axis_x_index,
+    uint8_t axis_y_index,
+    float end_x,
+    float end_y,
+    bool absolute,
+    float radius,
+    bool clockwise,
+    float feedrate
+);
+
+/**
+ * @brief Start helical arc move (XYZ circular interpolation)
+ * 
+ * Moves X and Y axes in a circular arc while simultaneously moving Z axis linearly.
+ * This creates a helical (spiral) motion path. Similar to G-code G02/G03 with Z axis.
+ * 
+ * X and Y follow a circular path using Bresenham circle algorithm.
+ * Z moves linearly, synchronized with the arc progress using Bresenham line algorithm.
+ * 
+ * Positions, radius, and feedrate are in units (mm or inches) as configured.
+ * Feedrate is in units/minute along the helical path (3D path length).
+ * 
+ * @param axis_x_index X axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_y_index Y axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_z_index Z axis servo index (0-3, where servo index = motor axis number)
+ * @param center_x Center X position in units
+ * @param center_y Center Y position in units
+ * @param radius Radius in units
+ * @param start_angle_deg Start angle in degrees (can be > 360 for multi-turn helixes)
+ * @param end_angle_deg End angle in degrees (can be > 360 for multi-turn helixes)
+ * @param z_start Z start position in units
+ * @param z_end Z end position in units
+ * @param clockwise True for clockwise, false for counter-clockwise
+ * @param feedrate Feedrate in units/minute along the helical path
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_manager_move_arc_helical(
+    uint8_t axis_x_index,
+    uint8_t axis_y_index,
+    uint8_t axis_z_index,
+    float center_x,
+    float center_y,
+    float radius,
+    int32_t start_angle_deg,
+    int32_t end_angle_deg,
+    float z_start,
+    float z_end,
+    bool clockwise,
+    float feedrate
+);
+
+/**
+ * @brief Start helical arc move using end point and radius
+ * 
+ * Moves X and Y axes in a circular arc while simultaneously moving Z axis linearly,
+ * from current position to end point. Similar to G-code G02/G03 with R parameter and Z axis.
+ * 
+ * The center is automatically calculated from current position, end point, and radius.
+ * There are two possible arcs (major and minor) - the direction parameter determines which.
+ * 
+ * X and Y follow a circular path using Bresenham circle algorithm.
+ * Z moves linearly, synchronized with the arc progress using Bresenham line algorithm.
+ * 
+ * Positions, radius, and feedrate are in units (mm or inches) as configured.
+ * Feedrate is in units/minute along the helical path (3D path length).
+ * 
+ * @param axis_x_index X axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_y_index Y axis servo index (0-3, where servo index = motor axis number)
+ * @param axis_z_index Z axis servo index (0-3, where servo index = motor axis number)
+ * @param end_x End X position in units (absolute if absolute=true, relative if absolute=false)
+ * @param end_y End Y position in units (absolute if absolute=true, relative if absolute=false)
+ * @param end_z End Z position in units (absolute if absolute=true, relative if absolute=false)
+ * @param absolute If true, end_x/end_y/end_z are absolute positions; if false, they are relative to current position
+ * @param radius Radius in units (must be >= half the distance from start to end in XY plane)
+ * @param clockwise True for clockwise (G02), false for counter-clockwise (G03)
+ * @param feedrate Feedrate in units/minute along the helical path
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if radius is too small
+ */
+esp_err_t clearpath_servo_manager_move_arc_helical_to_point(
+    uint8_t axis_x_index,
+    uint8_t axis_y_index,
+    uint8_t axis_z_index,
+    float end_x,
+    float end_y,
+    float end_z,
+    bool absolute,
+    float radius,
+    bool clockwise,
+    float feedrate
+);
+
+/**
+ * @brief Check if coordinated move is complete
+ * 
+ * @return true if all axes have reached their targets
+ */
+bool clearpath_servo_manager_is_coordinated_move_complete(void);
+
+/**
+ * @brief Stop coordinated move
+ * 
+ * Stops all axes in the coordinated motion group immediately.
+ * 
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_manager_stop_coordinated_move(void);
 
 #ifdef __cplusplus
 }

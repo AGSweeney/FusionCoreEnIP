@@ -88,6 +88,8 @@ struct clearpath_servo_handle_s {
     int32_t target_velocity;
     uint32_t vel_max;
     uint32_t accel_max;
+    uint32_t jerk_max;  // Maximum jerk for S-curve profile
+    clearpath_servo_profile_type_t profile_type;  // Motion profile type
     clearpath_servo_state_t state;
     bool enabled;
     SemaphoreHandle_t mutex;
@@ -97,6 +99,8 @@ struct clearpath_servo_handle_s {
     bool homing_complete;  // Homing operation completion flag
     uint64_t homing_start_time_us;  // Homing start timestamp for timeout
     uint32_t homing_timeout_ms;  // Homing timeout in milliseconds (0 = no timeout)
+    // S-curve profile state tracking
+    int32_t current_acceleration;  // Current acceleration (for S-curve profile)
 };
 
 esp_err_t clearpath_servo_init(const clearpath_servo_config_t *config, clearpath_servo_handle_t **handle_out)
@@ -132,12 +136,16 @@ esp_err_t clearpath_servo_init(const clearpath_servo_config_t *config, clearpath
     handle->target_velocity = 0;
     handle->vel_max = config->vel_max > 0 ? config->vel_max : 1000;
     handle->accel_max = config->accel_max > 0 ? config->accel_max : 10000;
+    // Default jerk_max: 10% of accel_max per second (reasonable default for S-curve)
+    handle->jerk_max = config->jerk_max > 0 ? config->jerk_max : (config->accel_max / 10);
+    handle->profile_type = config->profile_type;  // Default is TRAPEZOIDAL (0)
     handle->state = CLEARPATH_SERVO_STATE_IDLE;
     handle->enabled = false;
     handle->initialized = false;  // Set to true only after all initialization succeeds
     handle->homing_complete = false;
     handle->homing_start_time_us = 0;
     handle->homing_timeout_ms = 0;
+    handle->current_acceleration = 0;  // Initialize acceleration for S-curve
 
     handle->mutex = xSemaphoreCreateMutex();
     if (handle->mutex == NULL) {
@@ -470,6 +478,42 @@ esp_err_t clearpath_servo_set_accel_max(clearpath_servo_handle_t *handle, uint32
 
     handle->accel_max = accel_max;
     handle->config.accel_max = accel_max;
+
+    xSemaphoreGive(handle->mutex);
+    return ESP_OK;
+}
+
+esp_err_t clearpath_servo_set_jerk_max(clearpath_servo_handle_t *handle, uint32_t jerk_max)
+{
+    if (handle == NULL || !handle->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    handle->jerk_max = jerk_max > 0 ? jerk_max : (handle->accel_max / 10);  // Default to 10% of accel_max
+    handle->config.jerk_max = handle->jerk_max;
+
+    xSemaphoreGive(handle->mutex);
+    return ESP_OK;
+}
+
+esp_err_t clearpath_servo_set_profile_type(clearpath_servo_handle_t *handle, clearpath_servo_profile_type_t profile_type)
+{
+    if (handle == NULL || !handle->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    handle->profile_type = profile_type;
+    handle->config.profile_type = profile_type;
+    // Reset acceleration when changing profile type
+    handle->current_acceleration = 0;
 
     xSemaphoreGive(handle->mutex);
     return ESP_OK;
@@ -918,6 +962,36 @@ uint32_t clearpath_servo_get_accel_max(clearpath_servo_handle_t *handle)
     return accel_max;
 }
 
+uint32_t clearpath_servo_get_jerk_max(clearpath_servo_handle_t *handle)
+{
+    if (handle == NULL || !handle->initialized) {
+        return 0;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+
+    uint32_t jerk_max = handle->jerk_max;
+    xSemaphoreGive(handle->mutex);
+    return jerk_max;
+}
+
+clearpath_servo_profile_type_t clearpath_servo_get_profile_type(clearpath_servo_handle_t *handle)
+{
+    if (handle == NULL || !handle->initialized) {
+        return CLEARPATH_SERVO_PROFILE_TRAPEZOIDAL;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return CLEARPATH_SERVO_PROFILE_TRAPEZOIDAL;
+    }
+
+    clearpath_servo_profile_type_t profile_type = handle->profile_type;
+    xSemaphoreGive(handle->mutex);
+    return profile_type;
+}
+
 clearpath_servo_state_t clearpath_servo_get_state(clearpath_servo_handle_t *handle)
 {
     if (handle == NULL || !handle->initialized) {
@@ -944,6 +1018,52 @@ esp_err_t clearpath_servo_set_current_velocity(clearpath_servo_handle_t *handle,
     }
 
     handle->current_velocity = velocity;
+    xSemaphoreGive(handle->mutex);
+    return ESP_OK;
+}
+
+esp_err_t clearpath_servo_set_current_acceleration(clearpath_servo_handle_t *handle, int32_t acceleration)
+{
+    if (handle == NULL || !handle->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    handle->current_acceleration = acceleration;
+    xSemaphoreGive(handle->mutex);
+    return ESP_OK;
+}
+
+int32_t clearpath_servo_get_current_acceleration(clearpath_servo_handle_t *handle)
+{
+    if (handle == NULL || !handle->initialized) {
+        return 0;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return 0;
+    }
+
+    int32_t acceleration = handle->current_acceleration;
+    xSemaphoreGive(handle->mutex);
+    return acceleration;
+}
+
+esp_err_t clearpath_servo_set_state(clearpath_servo_handle_t *handle, clearpath_servo_state_t state)
+{
+    if (handle == NULL || !handle->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(handle->mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    handle->state = state;
+
     xSemaphoreGive(handle->mutex);
     return ESP_OK;
 }

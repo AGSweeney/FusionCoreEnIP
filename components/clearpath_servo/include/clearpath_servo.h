@@ -82,13 +82,22 @@ typedef enum {
 } clearpath_servo_homing_sensor_type_t;
 
 /**
+ * @brief Motion profile type
+ */
+typedef enum {
+    CLEARPATH_SERVO_PROFILE_TRAPEZOIDAL = 0,  /**< Trapezoidal: constant acceleration/deceleration */
+    CLEARPATH_SERVO_PROFILE_S_CURVE = 1       /**< S-curve: jerk-limited acceleration/deceleration */
+} clearpath_servo_profile_type_t;
+
+/**
  * @brief Servo state
  */
 typedef enum {
     CLEARPATH_SERVO_STATE_IDLE = 0,
     CLEARPATH_SERVO_STATE_MOVING,
     CLEARPATH_SERVO_STATE_VELOCITY_MODE,
-    CLEARPATH_SERVO_STATE_HOMING
+    CLEARPATH_SERVO_STATE_HOMING,
+    CLEARPATH_SERVO_STATE_COORDINATED  /**< Coordinated motion (linear or circular interpolation) */
 } clearpath_servo_state_t;
 
 /**
@@ -102,6 +111,8 @@ typedef struct {
     int gpio_homing_sensor; /**< GPIO pin for homing sensor (-1 if not used) */
     uint32_t vel_max;       /**< Maximum velocity in steps per second */
     uint32_t accel_max;     /**< Maximum acceleration in steps per second squared */
+    uint32_t jerk_max;      /**< Maximum jerk in steps per second cubed (for S-curve profile, 0 = use default) */
+    clearpath_servo_profile_type_t profile_type; /**< Motion profile type (trapezoidal or S-curve) */
     clearpath_servo_hlfb_mode_t hlfb_mode; /**< HLFB interpretation mode */
     bool hlfb_active_high;   /**< HLFB active high (true) or active low (false) */
     clearpath_servo_homing_sensor_type_t homing_sensor_type; /**< Homing sensor type (NO/NC) */
@@ -174,6 +185,24 @@ esp_err_t clearpath_servo_set_vel_max(clearpath_servo_handle_t *handle, uint32_t
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t clearpath_servo_set_accel_max(clearpath_servo_handle_t *handle, uint32_t accel_max);
+
+/**
+ * @brief Set maximum jerk (for S-curve profile)
+ * 
+ * @param handle Servo handle
+ * @param jerk_max Maximum jerk in steps per second cubed
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_set_jerk_max(clearpath_servo_handle_t *handle, uint32_t jerk_max);
+
+/**
+ * @brief Set motion profile type
+ * 
+ * @param handle Servo handle
+ * @param profile_type Profile type (trapezoidal or S-curve)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_set_profile_type(clearpath_servo_handle_t *handle, clearpath_servo_profile_type_t profile_type);
 
 /**
  * @brief Get current position
@@ -359,6 +388,22 @@ uint32_t clearpath_servo_get_vel_max(clearpath_servo_handle_t *handle);
 uint32_t clearpath_servo_get_accel_max(clearpath_servo_handle_t *handle);
 
 /**
+ * @brief Get maximum jerk
+ * 
+ * @param handle Servo handle
+ * @return uint32_t Maximum jerk in steps per second cubed
+ */
+uint32_t clearpath_servo_get_jerk_max(clearpath_servo_handle_t *handle);
+
+/**
+ * @brief Get motion profile type
+ * 
+ * @param handle Servo handle
+ * @return clearpath_servo_profile_type_t Current profile type
+ */
+clearpath_servo_profile_type_t clearpath_servo_get_profile_type(clearpath_servo_handle_t *handle);
+
+/**
  * @brief Get servo state
  * 
  * @param handle Servo handle
@@ -367,7 +412,7 @@ uint32_t clearpath_servo_get_accel_max(clearpath_servo_handle_t *handle);
 clearpath_servo_state_t clearpath_servo_get_state(clearpath_servo_handle_t *handle);
 
 /**
- * @brief Set current velocity (for trapezoidal profile tracking)
+ * @brief Set current velocity (for motion profile tracking)
  * 
  * Internal function for step generation task to update velocity during motion.
  * 
@@ -376,6 +421,38 @@ clearpath_servo_state_t clearpath_servo_get_state(clearpath_servo_handle_t *hand
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t clearpath_servo_set_current_velocity(clearpath_servo_handle_t *handle, int32_t velocity);
+
+/**
+ * @brief Set servo state (internal function for manager)
+ * 
+ * Internal function for manager to set servo state for coordinated motion.
+ * 
+ * @param handle Servo handle
+ * @param state New state
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_set_state(clearpath_servo_handle_t *handle, clearpath_servo_state_t state);
+
+/**
+ * @brief Set current acceleration (for S-curve profile tracking)
+ * 
+ * Internal function for step generation task to update acceleration during S-curve motion.
+ * 
+ * @param handle Servo handle
+ * @param acceleration Current acceleration in steps per second squared
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t clearpath_servo_set_current_acceleration(clearpath_servo_handle_t *handle, int32_t acceleration);
+
+/**
+ * @brief Get current acceleration (for S-curve profile tracking)
+ * 
+ * Internal function for step generation task to get current acceleration.
+ * 
+ * @param handle Servo handle
+ * @return int32_t Current acceleration in steps per second squared
+ */
+int32_t clearpath_servo_get_current_acceleration(clearpath_servo_handle_t *handle);
 
 #ifdef __cplusplus
 }

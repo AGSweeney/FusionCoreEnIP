@@ -2,17 +2,19 @@
 
 **Status: Scaffolded - NOT included in build**
 
-This component provides step and direction control for Teknic ClearPath servos, similar to the ClearCore library API. It handles step pulse generation, position tracking, velocity control, and acceleration/deceleration limits.
+Low-level driver for Teknic ClearPath servos providing step/direction control, position tracking, velocity profiles, and HLFB feedback monitoring. Designed to work with the `clearpath_servo_manager` component for multi-servo coordination and step generation.
 
 ## Features
 
-- **Step and Direction Control**: Standard step/direction interface for ClearPath servos
-- **Position Tracking**: 32-bit signed position counter
-- **Velocity Control**: Configurable maximum velocity (steps per second)
+- **Step/Direction Control**: Standard interface for ClearPath servos
+- **Position Tracking**: 32-bit signed position counter (±2,147,483,647 steps)
+- **Velocity Control**: Configurable maximum velocity (steps/second)
 - **Acceleration Control**: Configurable acceleration/deceleration limits
-- **Absolute and Relative Moves**: Support for both move types
+- **Motion Profiles**: Trapezoidal (constant acceleration) and S-curve (jerk-limited)
+- **Absolute/Relative Moves**: Support for both move types
 - **Continuous Velocity Mode**: Move at constant velocity until stopped
-- **HLFB Support**: High Level Feedback monitoring for status information
+- **Homing Support**: Move to sensor and set position to zero
+- **HLFB Monitoring**: High Level Feedback status interpretation
 - **Enable Control**: Optional enable GPIO for servo enable/disable
 - **Thread-Safe**: Mutex protection for concurrent access
 
@@ -20,20 +22,27 @@ This component provides step and direction control for Teknic ClearPath servos, 
 
 ### Level Shifting
 
-**Important**: ESP32-P4 GPIO outputs are 3.3V logic, which may not reliably drive ClearPath servo inputs. Level shifting is required using a device such as SN74AHCT14 (hex inverting Schmitt trigger) or similar level shifter to convert 3.3V logic to 5V logic levels that ClearPath servos expect.
+**Important**: ESP32-P4 GPIO outputs are 3.3V logic. ClearPath servos expect 5V logic levels. Level shifting is required using a device such as:
+- **SN74AHCT14** (hex inverting Schmitt trigger) - recommended
+- Similar level shifter ICs
 
-See the hookup schematic in `clearpath_servo_manager` component documentation for connection details.
+**Connection Requirements:**
+- **Step GPIO**: Output → Level shifter → ClearPath Step input (5V)
+- **Direction GPIO**: Output → Level shifter → ClearPath Direction input (5V)
+- **Enable GPIO**: Output → Level shifter → ClearPath Enable input (5V, optional)
+- **HLFB GPIO**: ClearPath HLFB output (5V) → Level shifter → Input (3.3V, optional)
+- **Homing Sensor**: Sensor output → Level shifter → Input (3.3V, optional)
 
-### GPIO Connections
+### GPIO Configuration
 
 Each servo requires:
-- **Step GPIO**: Output, generates step pulses (requires level shifting to 5V)
-- **Direction GPIO**: Output, sets direction (HIGH=forward, LOW=reverse, requires level shifting to 5V)
-- **Enable GPIO**: Output, optional, enables/disables servo (requires level shifting to 5V)
-- **HLFB GPIO**: Input, High Level Feedback status (5V from servo, may need level shifting to 3.3V)
-- **Homing Sensor GPIO**: Input, optional, homing sensor signal (may need level shifting to 3.3V)
+- **Step GPIO**: Output, generates step pulses (requires 3.3V→5V level shifting)
+- **Direction GPIO**: Output, sets direction (HIGH=forward, LOW=reverse, requires level shifting)
+- **Enable GPIO**: Output, optional, enables/disables servo (requires level shifting)
+- **HLFB GPIO**: Input, High Level Feedback status (5V from servo, requires 5V→3.3V level shifting)
+- **Homing Sensor GPIO**: Input, optional, homing sensor signal (may require level shifting)
 
-## API Reference
+## Quick Start
 
 ### Initialization
 
@@ -43,20 +52,28 @@ Each servo requires:
 clearpath_servo_config_t config = {
     .gpio_step = 8,
     .gpio_dir = 9,
-    .gpio_enable = 10,  // Optional, use -1 if not used
-    .gpio_hlfb = 11,    // Optional, use -1 if not used
+    .gpio_enable = 10,      // Optional, use -1 if not used
+    .gpio_hlfb = 11,        // Optional, use -1 if not used
     .gpio_homing_sensor = 12,  // Optional, use -1 if not used
-    .vel_max = 1000,    // Maximum velocity in steps/second
-    .accel_max = 10000, // Maximum acceleration in steps/second²
+    .vel_max = 1000,        // Maximum velocity in steps/second
+    .accel_max = 10000,     // Maximum acceleration in steps/second²
+    .jerk_max = 0,          // Maximum jerk (0 = use default: 10% of accel_max)
+    .profile_type = CLEARPATH_SERVO_PROFILE_TRAPEZOIDAL,
     .hlfb_mode = CLEARPATH_SERVO_HLFB_MODE_MOVE_COMPLETE,
     .hlfb_active_high = true,
     .homing_sensor_type = CLEARPATH_SERVO_HOMING_SENSOR_NORMALLY_OPEN,
-    .homing_velocity = 0  // 0 = use vel_max
+    .homing_velocity = 0    // 0 = use vel_max
 };
 
 clearpath_servo_handle_t *servo;
 esp_err_t ret = clearpath_servo_init(&config, &servo);
+if (ret != ESP_OK) {
+    ESP_LOGE("APP", "Failed to initialize servo");
+    return;
+}
 ```
+
+## API Reference
 
 ### Position Moves
 
@@ -94,6 +111,12 @@ clearpath_servo_set_vel_max(servo, 2000);  // 2000 steps/second
 
 // Set maximum acceleration
 clearpath_servo_set_accel_max(servo, 50000);  // 50000 steps/second²
+
+// Set maximum jerk (for S-curve profile)
+clearpath_servo_set_jerk_max(servo, 5000);  // 5000 steps/second³
+
+// Set motion profile type
+clearpath_servo_set_profile_type(servo, CLEARPATH_SERVO_PROFILE_S_CURVE);
 ```
 
 ### Position and Status
@@ -141,10 +164,10 @@ clearpath_servo_set_enable(servo, false);
 ### Homing
 
 ```c
-// Start homing move (move forward until sensor triggers)
+// Start homing move (forward direction, 5 second timeout)
 clearpath_servo_home(servo, 1, 5000);  // direction=forward, timeout=5 seconds
 
-// Start homing move (move reverse until sensor triggers)
+// Start homing move (reverse direction, 10 second timeout)
 clearpath_servo_home(servo, -1, 10000);  // direction=reverse, timeout=10 seconds
 
 // Check if homing is complete
@@ -163,31 +186,19 @@ bool sensor_triggered = clearpath_servo_get_homing_sensor_status(servo);
 - Supports timeout (0 = no timeout)
 - Sensor type configurable: NO (Normally Open) or NC (Normally Closed)
 
-## Step Generation
+## Motion Profiles
 
-**Note**: This driver component provides the control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task using the ESP32-P4 RMT (Remote Control) hardware peripheral.
+### Trapezoidal Profile (Default)
 
-### Manager Integration Functions
+- **Acceleration Phase**: Velocity ramps from 0 to target with constant acceleration
+- **Constant Velocity Phase**: Maintains target velocity
+- **Deceleration Phase**: Velocity ramps from target to 0 with constant deceleration
 
-The driver provides getter/setter functions for the manager to access and update internal state:
+### S-Curve Profile
 
-- `clearpath_servo_get_target_position()` - Get target position
-- `clearpath_servo_get_target_velocity()` - Get target velocity
-- `clearpath_servo_get_vel_max()` - Get maximum velocity
-- `clearpath_servo_get_accel_max()` - Get maximum acceleration
-- `clearpath_servo_get_state()` - Get servo state (IDLE/MOVING/VELOCITY_MODE)
-- `clearpath_servo_set_current_velocity()` - Update current velocity (for trapezoidal profile tracking)
-
-### Manager Responsibilities
-
-The `clearpath_servo_manager` component handles:
-- Step pulse generation via RMT hardware peripheral (precise timing, typically 10 microsecond pulse width)
-- Background task coordinates step timing (default 5 kHz, configurable)
-- Trapezoidal velocity profiles with integer-only calculations
-- Position tracking and step counting
-- Integration with EtherNet/IP assembly data
-
-See `components/clearpath_servo_manager/README.md` for detailed step generation implementation.
+- **Jerk-Limited Acceleration**: Smoother motion with reduced mechanical stress
+- **Jerk Rate**: Controlled by `jerk_max` (default: 10% of `accel_max` per second)
+- **Phases**: Jerk-up → Constant acceleration → Constant velocity → Constant deceleration → Jerk-down
 
 ## HLFB Modes
 
@@ -201,46 +212,42 @@ HLFB (High Level Feedback) can be configured in ClearPath MSP software to report
 
 The HLFB mode should match the configuration set in Teknic Motion Studio (MSP) software.
 
-## Integration Notes
+## Step Generation
 
-This driver component is designed to work with `clearpath_servo_manager`, which provides:
+**Note**: This driver component provides control logic and state management. Actual step pulse generation is performed by the `clearpath_servo_manager` component's background task using the ESP32-P4 RMT (Remote Control) hardware peripheral.
+
+The manager component:
+- Generates step pulses via RMT hardware (precise timing, typically 10 microsecond pulse width)
+- Coordinates step timing in background task (default 5 kHz)
+- Implements velocity profiles with integer-only calculations
+- Updates position tracking based on step count
+
+See `components/clearpath_servo_manager/README.md` for detailed step generation implementation.
+
+## Integration with Manager
+
+This driver is designed to work with `clearpath_servo_manager`, which provides:
 - Background step generation task
-- Assembly data integration (EtherNet/IP)
 - Multi-servo management
+- Coordinated motion (linear/circular interpolation)
+- EtherNet/IP assembly integration
 - Configuration management (NVS)
-- Status updates and feedback
 
-For hardware connection details, assembly data layout, and integration instructions, see `components/clearpath_servo_manager/README.md`.
+For multi-servo coordination and unit-based motion control, use the manager component API.
 
 ## Limitations
 
-- Position counter is 32-bit signed integer (±2,147,483,647 steps)
-- Step generation uses RMT hardware peripheral for precise pulse timing
+- Position counter: 32-bit signed integer (±2,147,483,647 steps)
+- Step generation: Performed by manager component using RMT hardware
+- RMT timing resolution: 1 MHz (1 microsecond per tick)
 - Step pulse width: 10 microseconds (configurable via RMT)
-- Step generation frequency depends on FreeRTOS task scheduling (default 5 kHz)
-- **Maximum step rate**: Limited by task frequency and RMT configuration. RMT hardware enables higher rates than software GPIO toggling
-- Acceleration/deceleration profiles are simplified (trapezoidal)
-- RMT hardware provides accurate pulse timing independent of CPU load
-- **Integer Math**: All internal calculations use integer arithmetic (no floating point) for embedded system efficiency
-
-## Future Enhancements
-
-- Hardware timer-based step generation for higher precision
-- S-curve acceleration profiles
-- Position capture on HLFB events
-- Limit switch support
-- Homing routines
-- Multi-axis coordinated motion
+- Integer math: All internal calculations use integer arithmetic
 
 ## Attribution
 
-This implementation is inspired by and follows the API design patterns of the Teknic ClearCore library. The API function names and concepts (Move, MoveVelocity, VelMax, AccelMax, StepsComplete, HLFB) are based on the ClearCore library API for compatibility and familiarity with Teknic's established interface.
+This implementation is inspired by and follows the API design patterns of the Teknic ClearCore library. The API function names and concepts (Move, MoveVelocity, VelMax, AccelMax, StepsComplete, HLFB) are based on the ClearCore library API for compatibility and familiarity.
 
 **References:**
-- [Teknic ClearCore Library](https://github.com/Teknic-Inc/ClearCore-library) - API design inspiration
-- [ClearCore Library Documentation](https://teknic-inc.github.io/ClearCore-library/) - API reference
-- [ClearCore Step and Direction Control](https://teknic-inc.github.io/ClearCore-library/_move_gen.html) - Step generation concepts
-- [ClearPath Servo User Manual](https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf) - Hardware specifications
-- ESP32-P4 RMT (Remote Control) API documentation - Hardware step pulse generation
-- ESP32-P4 GPIO API documentation
-- FreeRTOS task and mutex documentation
+- [Teknic ClearCore Library](https://github.com/Teknic-Inc/ClearCore-library)
+- [ClearCore Library Documentation](https://teknic-inc.github.io/ClearCore-library/)
+- [ClearPath Servo User Manual](https://www.teknic.com/files/downloads/Clearpath-SC%20User%20Manual.pdf)
